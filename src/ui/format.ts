@@ -58,7 +58,9 @@ export function scaricaFile(nome: string, contenuto: Blob | string, mime = 'text
 /** Apre un file (es. PDF) in una nuova scheda; se il browser lo blocca, lo scarica. */
 export function apriFile(nome: string, contenuto: Blob): void {
   const url = URL.createObjectURL(contenuto);
-  const w = window.open(url, '_blank', 'noopener');
-  if (!w) scaricaFile(nome, contenuto);
+  // senza 'noopener' nelle opzioni (altrimenti window.open restituisce sempre null): lo azzero dopo
+  const w = window.open(url, '_blank');
+  if (w) w.opener = null;
+  else scaricaFile(nome, contenuto);
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

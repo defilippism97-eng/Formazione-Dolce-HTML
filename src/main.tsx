@@ -9,8 +9,8 @@ import { BackendDemo } from './data/demo/backend-demo';
 import { archivioFilePredefinito, persistenzaPredefinita, SessioneBrowser } from './data/demo/store';
 import { BackendHttp } from './data/http/backend-http';
 import { creaProviderEasyAuth, creaProviderTokenEntra } from './data/http/auth';
+import './styles/app.css'; // prima delle schermate: i loro fogli di stile vengono dopo e possono specializzarlo
 import { Radice } from './ui/App';
-import './styles/app.css';
 
 function creaBackend(): Backend {
   if (config.modalita === 'produzione') {

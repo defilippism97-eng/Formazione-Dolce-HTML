@@ -205,7 +205,8 @@ export class BackendDemo implements Backend {
   }
 
   private registra(v: Omit<VoceRegistro, 'id' | 'data'> & { data?: string }): void {
-    this.dati.registro.unshift({ id: this.nuovoId('g'), data: v.data ?? this.ora(), ...v });
+    // registro in ordine cronologico (voci dello stesso istante nell'ordine in cui avvengono)
+    this.dati.registro.push({ id: this.nuovoId('g'), data: v.data ?? this.ora(), ...v });
   }
 
   private cambiaStato(r: Richiesta, nuovo: StatoRichiesta, autore: string, ruolo: RuoloRegistro, nota?: string): void {
@@ -583,7 +584,11 @@ export class BackendDemo implements Backend {
     const s = this.richiediSessione();
     const r = this.trovaRichiesta(s, id);
     const meseChiuso = this.meseChiuso(r.annoCompetenza, r.meseCompetenza);
-    const voci = this.dati.registro.filter((v) => v.richiestaId === r.id);
+    const voci = this.dati.registro
+      .map((v, i) => ({ v, i }))
+      .filter(({ v }) => v.richiestaId === r.id)
+      .sort((a, b) => a.v.data.localeCompare(b.v.data) || a.i - b.i)
+      .map(({ v }) => v);
     // lo storico completo è riservato a HR; gli altri vedono solo i cambi di stato
     const storico = isUfficioHR(s) ? voci : voci.filter((v) => v.campo === 'Stato').map((v) => ({ ...v, autore: v.ruolo, nota: undefined }));
     const duplicati = trovaDuplicati(r, this.dati.richieste).filter((d) => puoVedereRichiesta(s, d)).map((d) => d.numero);
@@ -983,7 +988,12 @@ export class BackendDemo implements Backend {
     const s = this.richiediSessione();
     this.richiediRuolo(s, 'hr', 'admin');
     return this.copia(
-      this.dati.registro.filter((v) => (!filtri.richiestaId || v.richiestaId === filtri.richiestaId) && (!filtri.entita || v.entita === filtri.entita)).slice(0, 1000),
+      this.dati.registro
+        .map((v, i) => ({ v, i }))
+        .filter(({ v }) => (!filtri.richiestaId || v.richiestaId === filtri.richiestaId) && (!filtri.entita || v.entita === filtri.entita))
+        .sort((a, b) => b.v.data.localeCompare(a.v.data) || b.i - a.i)
+        .slice(0, 1000)
+        .map(({ v }) => v),
     );
   }
 

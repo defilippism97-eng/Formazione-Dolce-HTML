@@ -2,7 +2,7 @@
  * Componenti di base dell'interfaccia. Accessibili (etichette, focus, ruoli ARIA)
  * e responsive. Gli stili sono in src/styles/app.css.
  */
-import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
+import { forwardRef, useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 import { INFO_STATI, type StatoRichiesta } from '../../domain';
 import { Icona, type NomeIcona } from './Icona';
 
@@ -11,28 +11,24 @@ import { Icona, type NomeIcona } from './Icona';
 // ---------------------------------------------------------------------------
 export type VariantePulsante = 'primario' | 'secondario' | 'pericolo' | 'successo' | 'avviso' | 'testo';
 
-export function Pulsante({
-  variante = 'primario',
-  icona,
-  inCorso,
-  piccolo,
-  children,
-  className,
-  ...resto
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variante?: VariantePulsante; icona?: NomeIcona; inCorso?: boolean; piccolo?: boolean }) {
+export const Pulsante = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { variante?: VariantePulsante; icona?: NomeIcona; inCorso?: boolean; piccolo?: boolean }
+>(function Pulsante({ variante = 'primario', icona, inCorso, piccolo, children, className, disabled, ...resto }, rif) {
   return (
     <button
       type="button"
+      ref={rif}
       className={`btn btn-${variante}${piccolo ? ' btn-piccolo' : ''}${className ? ` ${className}` : ''}`}
-      disabled={resto.disabled || inCorso}
-      aria-busy={inCorso || undefined}
       {...resto}
+      disabled={disabled || inCorso}
+      aria-busy={inCorso || undefined}
     >
       {inCorso ? <span className="spinner" aria-hidden /> : icona && <Icona nome={icona} />}
       {children && <span>{children}</span>}
     </button>
   );
-}
+});
 
 /** Pulsante solo icona, con etichetta accessibile e suggerimento. */
 export function PulsanteIcona({ icona, etichetta, variante = 'testo', ...resto }: ButtonHTMLAttributes<HTMLButtonElement> & { icona: NomeIcona; etichetta: string; variante?: VariantePulsante }) {
