@@ -1,0 +1,29 @@
+{
+  "name": "gestione-ore-formazione",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gestione ore formazione - Società Dolce: prototipo completo con modalità DEMO",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/build.mjs --watch",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "node scripts/build.mjs && node tests/e2e/demo.e2e.mjs",
+    "verifica": "npm run typecheck && npm test && npm run test:e2e"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "esbuild": "0.24.0",
+    "typescript": "5.6.3",
+    "vitest": "2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
