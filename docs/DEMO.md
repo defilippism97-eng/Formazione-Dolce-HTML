@@ -2,7 +2,7 @@
 
 Per presentare l'app a HR, coordinatori e direzione: circa 15 minuti.
 
-**Come aprirla:** doppio clic su `dist/index.html`, oppure `npm run dev` e http://localhost:5173.
+**Come aprirla:** doppio clic su `demo/Gestione-ore-formazione-DEMO.html` (o `dist/index.html` dopo `npm run build`), oppure `npm run dev` e http://localhost:5173.
 
 **Dati:** tutti inventati, generati in base alla data di oggi:
 - circa 140 richieste in tutti gli stati negli ultimi 4 mesi;

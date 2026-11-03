@@ -1,0 +1,175 @@
+/* ==========================================================================
+   Schermate di gestione: richieste del team, validazione HR, riepilogo
+   mensile, chiusura del mese e amministrazione.
+   Completa src/styles/app.css (stesse variabili e stessi componenti).
+   ========================================================================== */
+
+/* Tabelle con molte colonne: intestazioni su più righe per non allargare troppo */
+.gestione-tabella .tabella th { white-space: normal; vertical-align: bottom; min-width: 64px; line-height: 1.25; }
+.gestione-tabella .tabella td { vertical-align: top; }
+.cella-titolo-corso { display: block; min-width: 180px; max-width: 320px; }
+.testo-a-capo { white-space: normal; overflow-wrap: break-word; }
+
+/* Segnali (duplicato, attestato mancante, attesa…) */
+.segnali { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.segnali-compatti { gap: 2px; }
+.segnale { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; }
+.segnale-pericolo { color: var(--pericolo); background: var(--pericolo-chiaro); }
+.segnale-avviso { color: var(--avviso); background: var(--avviso-chiaro); }
+.segnale-info { color: var(--info); background: var(--info-chiaro); }
+.legenda { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--testo-secondario); align-items: center; }
+.legenda > span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Ore modificabili da HR direttamente nella tabella */
+.ore-hr { display: grid; grid-template-columns: auto auto; gap: 4px 6px; align-items: center; justify-content: end; }
+.ore-hr label { font-size: 12px; color: var(--testo-secondario); text-align: right; }
+.ore-hr input {
+  width: 68px; min-height: 34px; padding: 4px 8px; text-align: right; border: 1px solid var(--bordo);
+  border-radius: var(--raggio-piccolo); background: var(--superficie); font-variant-numeric: tabular-nums;
+}
+.ore-hr input[aria-invalid='true'] { border-color: var(--pericolo); background: #fffafa; }
+.ore-hr-nota { grid-column: 1 / -1; font-size: 12px; text-align: right; }
+.ore-hr-errore { grid-column: 1 / -1; font-size: 12px; color: var(--pericolo); font-weight: 600; text-align: right; max-width: 170px; justify-self: end; }
+.ore-coppia { display: grid; gap: 0; text-align: right; white-space: nowrap; }
+.ore-coppia small { color: var(--testo-secondario); font-size: 12px; }
+
+/* Barra delle azioni multiple (resta visibile in fondo alla finestra) */
+.barra-selezione {
+  position: sticky; bottom: 12px; z-index: 20; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  padding: 10px 14px; background: var(--colore-primario-scuro); color: #fff; border-radius: var(--raggio); box-shadow: var(--ombra-alta);
+}
+.barra-selezione strong { margin-right: auto; }
+.barra-selezione .btn-testo { color: #fff; }
+.barra-selezione .btn-testo:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
+@media (max-width: 600px) {
+  .barra-selezione { bottom: 8px; }
+  .barra-selezione strong { flex: 1 1 100%; }
+  .barra-selezione .btn { flex: 1 1 calc(50% - 8px); }
+}
+
+/* Esito delle azioni multiple */
+.elenco-esito { margin: 6px 0 0; padding-left: 18px; max-height: 220px; overflow-y: auto; }
+.elenco-compatto { margin: 4px 0 0; padding-left: 18px; }
+.elenco-compatto li + li { margin-top: 2px; }
+
+/* Dialogo del perimetro */
+.perimetro-conteggio { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.perimetro-conteggio .indicatore { box-shadow: none; padding: 10px 12px; }
+.perimetro-conteggio .indicatore-valore { font-size: 22px; }
+.perimetro-anteprima { max-height: 220px; overflow-y: auto; border: 1px solid var(--bordo-chiaro); border-radius: var(--raggio-piccolo); }
+.perimetro-anteprima ul { list-style: none; margin: 0; padding: 0; }
+.perimetro-anteprima li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px; border-bottom: 1px solid var(--bordo-chiaro); font-size: 14px; }
+.perimetro-anteprima li:last-child { border-bottom: 0; }
+.dialogo-azioni-perimetro { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; width: 100%; }
+@media (max-width: 600px) { .dialogo-azioni-perimetro .btn { flex: 1 1 100%; } }
+
+/* Riepilogo: pannelli, totali, stampa */
+.riga-totale { font-weight: 750; }
+.solo-stampa { display: none; }
+.intestazione-stampa { margin-bottom: 8px; }
+.intestazione-stampa p { margin: 2px 0; }
+.pannello-titolo { font-size: 17px; margin: 0 0 10px; }
+
+/* Chiusura mensile */
+.stato-periodo { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 750; padding: 4px 14px; border-radius: 999px; border: 1px solid; }
+.stato-periodo-Aperto { color: var(--info); background: var(--info-chiaro); }
+.stato-periodo-Chiuso { color: var(--successo); background: var(--successo-chiaro); }
+.stato-periodo-Riaperto { color: var(--avviso); background: var(--avviso-chiaro); }
+.selettore-periodo { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; }
+.selettore-periodo .campo { min-width: 150px; }
+.gruppo-anomalie + .gruppo-anomalie { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--bordo-chiaro); }
+.gruppo-anomalie h3 { font-size: 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px; }
+.gruppo-anomalie ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.gruppo-anomalie li { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: var(--raggio-piccolo); background: var(--sfondo); border-left: 3px solid var(--bordo); }
+.gravita-alta li { border-left-color: var(--pericolo); }
+.gravita-media li { border-left-color: #d4a72c; }
+.gravita-bassa li { border-left-color: var(--info); }
+.segnalazione-testo { flex: 1 1 260px; min-width: 0; }
+
+/* Amministrazione */
+.sezione-area + .sezione-area { margin-top: 18px; }
+.sezione-area h3 { font-size: 15px; color: var(--colore-primario-scuro); text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; display: flex; gap: 8px; align-items: center; }
+.cambio-valore { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.cambio-valore del { color: var(--pericolo); text-decoration: line-through; }
+.cambio-valore ins { color: var(--successo); text-decoration: none; font-weight: 600; }
+.elenco-segnalazioni { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.elenco-segnalazioni li { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 12px; border: 1px solid var(--bordo-chiaro); border-left: 3px solid #d4a72c; border-radius: var(--raggio-piccolo); background: var(--superficie); }
+.elenco-segnalazioni time { font-size: 12.5px; color: var(--testo-secondario); }
+.account-elenco code { font-size: 13px; }
+.strumenti-demo { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.strumento { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--bordo-chiaro); border-radius: var(--raggio); background: var(--superficie); }
+.strumento p { margin: 0; color: var(--testo-secondario); font-size: 14px; flex: 1; }
+.strumento .btn { align-self: flex-start; }
+
+@media (max-width: 720px) {
+  .gestione-tabella .tabella td { vertical-align: middle; }
+  .cella-titolo-corso { min-width: 0; max-width: none; }
+  .ore-hr { justify-content: end; }
+  .ore-coppia { text-align: right; }
+}
+
+/* --------------------------------------------------------------------------
+   Stampa (riepilogo e chiusura): tutte le sezioni, tabelle compatte
+   -------------------------------------------------------------------------- */
+@media print {
+  .solo-stampa { display: block !important; }
+  .non-stampare, .tab, .barra-selezione { display: none !important; }
+  .pannello-stampa[hidden] { display: block !important; }
+  .pannello-stampa { break-before: auto; margin-top: 12px; }
+  .indicatori { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 6px; }
+  .indicatore { box-shadow: none; padding: 6px 8px; }
+  .indicatore-valore { font-size: 18px; }
+  .stampa-tabelle .tabella-contenitore { overflow: visible !important; border: 0 !important; }
+  .stampa-tabelle .tabella { display: table !important; font-size: 10px; }
+  .stampa-tabelle .tabella thead { display: table-header-group !important; }
+  .stampa-tabelle .tabella tbody { display: table-row-group !important; }
+  .stampa-tabelle .tabella tr { display: table-row !important; box-shadow: none !important; border: 0 !important; margin: 0 !important; padding: 0 !important; }
+  .stampa-tabelle .tabella th, .stampa-tabelle .tabella td { display: table-cell !important; padding: 3px 4px !important; text-align: left; border-bottom: 1px solid #ccc !important; }
+  .stampa-tabelle .tabella td.num, .stampa-tabelle .tabella th.num { text-align: right; }
+  .stampa-tabelle .tabella td::before { content: none !important; }
+  .stampa-tabelle .tabella .col-azioni, .stampa-tabelle .tabella .col-selezione { display: none !important; }
+  .stampa-tabelle .badge-stato { border: 0; padding: 0; background: none !important; }
+}
+
+/* Pulsante con l'aspetto di un collegamento */
+.btn-link { background: none; border: 0; padding: 0; color: var(--colore-primario); text-decoration: underline; cursor: pointer; font-size: inherit; font-weight: 600; }
+.btn-link:hover { color: var(--colore-primario-scuro); }
+
+/* I contenitori delle schermate di gestione sono elementi di griglia: senza min-width: 0
+   una tabella larga allargherebbe tutta la pagina invece di scorrere nel proprio riquadro */
+.gestione-tabella, .gestione-pannello, .non-stampare, .pannello-stampa, .solo-stampa, .sezione-area { min-width: 0; }
+/* testi lunghi che devono poter andare a capo (anche su smartphone, dove le righe diventano schede) */
+.testo-a-capo .cella-principale, .cella-principale.testo-a-capo { white-space: normal; }
+.segnali .etichetta { white-space: normal; text-align: left; border-radius: 8px; }
+@media (max-width: 720px) {
+  .gestione-tabella .tabella td > * { min-width: 0; }
+  .gestione-tabella .segnali { justify-content: flex-end; }
+}
+/* i testi .sr-only (position: absolute) della tabella devono restare dentro il riquadro che scorre,
+   altrimenti allargano tutta la pagina */
+.gestione-tabella .tabella-contenitore, .gestione-pannello .tabella-contenitore, .pannello-stampa .tabella-contenitore { position: relative; }
+/* contenuto su più righe di una cella (su smartphone resta un unico blocco allineato a destra) */
+.cella-blocco { display: block; min-width: 0; }
+@media (max-width: 600px) {
+  .indicatori-compatti { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .indicatori-compatti .indicatore { padding: 10px 12px; }
+  .indicatori-compatti .indicatore-valore { font-size: 21px; }
+  .indicatori-compatti .indicatore-etichetta { font-size: 13px; line-height: 1.3; }
+}
+
+/* Tabella della validazione HR: più compatta, così le ore modificabili restano visibili senza scorrere */
+@media (min-width: 721px) {
+  .tabella-compatta .tabella th, .tabella-compatta .tabella td { padding: 8px 6px; }
+  .tabella-compatta .tabella .col-selezione { padding-left: 12px; }
+  .tabella-compatta .cella-titolo-corso { min-width: 130px; max-width: 210px; }
+  .tabella-compatta .tabella th { min-width: 52px; }
+  .tabella-compatta .segnali { max-width: 190px; }
+  .tabella-compatta .badge-stato { white-space: normal; border-radius: 10px; max-width: 140px; line-height: 1.3; padding: 3px 8px; text-align: center; }
+}
+@media (max-width: 720px) {
+  /* spazio per la casella di selezione, che su smartphone sta in alto a destra della scheda */
+  .gestione-tabella .tabella td.col-selezione + td { padding-right: 48px; }
+}
+@media (max-width: 720px) {
+  .gestione-tabella .badge-stato { white-space: normal; border-radius: 10px; text-align: center; line-height: 1.35; padding: 3px 8px; }
+}

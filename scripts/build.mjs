@@ -46,6 +46,12 @@ async function componi(risultato) {
   await writeFile(resolve(dist, 'index.html'), html);
   const kb = Math.round(Buffer.byteLength(html) / 1024);
   console.log(`dist/index.html (${kb} KB)`);
+  if (!watch) {
+    // copia della DEMO versionata nel repository: si apre con un doppio clic, senza installare nulla
+    await mkdir(resolve(radice, 'demo'), { recursive: true });
+    await writeFile(resolve(radice, 'demo/Gestione-ore-formazione-DEMO.html'), html);
+    console.log('demo/Gestione-ore-formazione-DEMO.html');
+  }
 }
 
 if (watch) {

@@ -143,7 +143,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* --------------------------------------------------------------------------
    Pagina, schede, griglie
    -------------------------------------------------------------------------- */
-.pagina { display: grid; gap: 16px; }
+.pagina { display: grid; gap: 16px; min-width: 0; }
+.pagina > * { min-width: 0; }
 .pagina-intestazione { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
 .pagina-intestazione h1 { font-size: 26px; font-weight: 700; outline: none; }
 .pagina-sottotitolo { margin: 4px 0 0; color: var(--testo-secondario); }
@@ -305,7 +306,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* --------------------------------------------------------------------------
    Tabelle (su smartphone diventano schede)
    -------------------------------------------------------------------------- */
-.tabella-contenitore { overflow-x: auto; border: 1px solid var(--bordo-chiaro); border-radius: var(--raggio); background: var(--superficie); }
+.tabella-contenitore { position: relative; max-width: 100%; overflow-x: auto; border: 1px solid var(--bordo-chiaro); border-radius: var(--raggio); background: var(--superficie); }
 .tabella { width: 100%; border-collapse: collapse; font-size: 14px; }
 .tabella th { text-align: left; font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--testo-secondario); background: #fafbfc; padding: 10px 12px; border-bottom: 1px solid var(--bordo-chiaro); white-space: nowrap; }
 .tabella td { padding: 10px 12px; border-bottom: 1px solid var(--bordo-chiaro); vertical-align: middle; }
@@ -323,12 +324,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .tabella thead { display: none; }
   .tabella, .tabella tbody, .tabella tr, .tabella td { display: block; width: 100%; }
   .tabella tr { background: var(--superficie); border: 1px solid var(--bordo-chiaro); border-radius: var(--raggio); margin-bottom: 10px; padding: 8px 4px; box-shadow: var(--ombra); position: relative; }
-  .tabella td { border: 0; padding: 4px 12px; display: flex; justify-content: space-between; gap: 12px; text-align: right; }
-  .tabella td::before { content: attr(data-titolo); font-weight: 600; color: var(--testo-secondario); text-align: left; }
+  .tabella td { border: 0; padding: 4px 12px; display: block; text-align: right; overflow-wrap: anywhere; }
+  .tabella td::after { content: ''; display: block; clear: both; }
+  .tabella td::before { content: attr(data-titolo); float: left; margin-right: 12px; font-weight: 600; color: var(--testo-secondario); text-align: left; }
+  .tabella .cella-principale, .tabella .badge-stato, .tabella .etichetta { white-space: normal; }
   .tabella td.secondaria { display: none; }
   .tabella td.col-selezione { position: absolute; top: 6px; right: 6px; width: auto; padding: 4px; }
   .tabella td.col-selezione::before, .tabella td.col-azioni::before { content: none; }
-  .tabella td.col-azioni { justify-content: flex-end; border-top: 1px solid var(--bordo-chiaro); margin-top: 4px; padding-top: 6px; }
+  .tabella td.col-azioni { border-top: 1px solid var(--bordo-chiaro); margin-top: 4px; padding-top: 6px; }
+  .tabella td.col-azioni .azioni-riga { justify-content: flex-end; }
 }
 
 /* --------------------------------------------------------------------------
@@ -379,7 +383,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .dialogo-piede { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--bordo-chiaro); flex-wrap: wrap; }
 .dialogo-testo { white-space: pre-line; }
 
-.toast-area { position: fixed; right: 16px; bottom: 16px; display: grid; gap: 8px; z-index: 80; width: min(420px, calc(100vw - 32px)); }
+.toast-area { position: fixed; right: 16px; top: calc(var(--altezza-intestazione) + 12px); display: grid; gap: 8px; z-index: 80; width: min(420px, calc(100vw - 32px)); }
 .toast { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 12px 14px; border-radius: var(--raggio-piccolo); color: #fff; box-shadow: var(--ombra-alta); font-weight: 500; }
 .toast-successo { background: var(--successo); }
 .toast-errore { background: var(--pericolo); }

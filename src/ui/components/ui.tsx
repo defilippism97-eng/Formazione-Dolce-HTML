@@ -398,12 +398,15 @@ export function BarraFiltri({ children, onAzzera, conteggio }: { children: React
 export function Dialogo({ titolo, children, piede, onChiudi, largo }: { titolo: string; children: ReactNode; piede?: ReactNode; onChiudi: () => void; largo?: boolean }) {
   const rif = useRef<HTMLDivElement>(null);
   const idTitolo = useId();
+  // il callback più recente senza far ripartire l'effetto (che sposterebbe il focus)
+  const chiudiRif = useRef(onChiudi);
+  chiudiRif.current = onChiudi;
   useEffect(() => {
     const precedente = document.activeElement as HTMLElement | null;
     const primo = rif.current?.querySelector<HTMLElement>('textarea, input, select, button:not(.dialogo-chiudi)');
     (primo ?? rif.current)?.focus();
     const tasto = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onChiudi();
+      if (e.key === 'Escape') chiudiRif.current();
       if (e.key === 'Tab' && rif.current) {
         const f = [...rif.current.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((x) => !x.hasAttribute('disabled'));
         const primoF = f[0];
@@ -425,7 +428,7 @@ export function Dialogo({ titolo, children, piede, onChiudi, largo }: { titolo: 
       document.body.classList.remove('modale-aperta');
       precedente?.focus?.();
     };
-  }, [onChiudi]);
+  }, []);
   return (
     <div className="dialogo-sfondo" onMouseDown={(e) => e.target === e.currentTarget && onChiudi()}>
       <div className={`dialogo${largo ? ' dialogo-largo' : ''}`} role="dialog" aria-modal="true" aria-labelledby={idTitolo} ref={rif} tabIndex={-1}>

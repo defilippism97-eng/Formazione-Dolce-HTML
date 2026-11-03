@@ -16,7 +16,7 @@ L'interfaccia è responsive (computer, tablet, smartphone).
 
 ## Provarla subito (modalità DEMO)
 
-Aprire **`dist/index.html`** nel browser (doppio clic, nessuna installazione) e scegliere un account dimostrativo:
+Scaricare e aprire **[`demo/Gestione-ore-formazione-DEMO.html`](demo/Gestione-ore-formazione-DEMO.html)** nel browser (doppio clic, nessuna installazione; Chrome, Edge, Firefox o Safari aggiornati) e scegliere un account dimostrativo:
 
 | Account | Ruolo |
 |---|---|
@@ -44,7 +44,7 @@ Come funziona la demo:
 ### Tecnologie
 
 - **TypeScript (strict) + React 18**, nessun'altra libreria a runtime.
-- **esbuild** per compilare in un **unico file HTML** (circa 300 KB).
+- **esbuild** per compilare in un **unico file HTML** (circa 460 KB, nessuna risorsa esterna).
 - **Vitest** per i test delle regole, **Playwright** per i test nel browser.
 
 Comandi:
@@ -55,7 +55,7 @@ npm run dev         # sviluppo su http://localhost:5173
 npm run typecheck   # controllo dei tipi
 npm test            # test delle regole e del backend demo
 npm run test:e2e    # test end-to-end nel browser
-npm run build       # dist/index.html
+npm run build       # dist/index.html (+ copia in demo/)
 ```
 
 ### Struttura
