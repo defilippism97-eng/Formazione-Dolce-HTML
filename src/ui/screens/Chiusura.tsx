@@ -1,18 +1,25 @@
 /**
  * Schermata 8 – Chiusura mensile HR e file per l'Ufficio Paghe (Flusso 6).
  *
- * HR verifica le richieste ancora aperte e le anomalie del mese, chiude il mese (da quel momento
- * nessuna modifica è più consentita), genera il file paghe e lo scarica dall'archivio.
+ * HR verifica le richieste ancora aperte (raggruppate per coordinatore, così sa chi sollecitare)
+ * e le anomalie del mese, chiude il mese (da quel momento nessuna modifica è più consentita),
+ * genera il file paghe e lo scarica dall'archivio. Il file ha una colonna per ogni voce: ore
+ * retribuite, ore gettone, ore non retribuite, ore di diritto allo studio e ore di riqualifica
+ * professionale.
  * Solo l'amministratore può riaprire eccezionalmente un mese chiuso, indicando il motivo.
  */
 import { useMemo, useState } from 'react';
-import type { StatoMese } from '../../data/api';
+import type { ApertePerCoordinatore, StatoMese } from '../../data/api';
 import {
   ETICHETTA_ANOMALIA,
+  INTESTAZIONE_PAGHE,
   mesePrecedente,
+  righePaghe,
+  totaliPaghe,
   type Anomalia,
   type FilePaghe,
   type Lavoratore,
+  type RigaPaghe,
   type StatoPeriodo,
   type StatoRichiesta,
   type TipoAnomalia,
@@ -37,7 +44,7 @@ import { useApp, useConferma } from '../contesto';
 import * as f from '../format';
 import { useAzione, useCarica } from '../hooks';
 import { naviga, ROTTE } from '../router';
-import { nominativo, nomeUtente, oggiAnnoMese, opzioniAnni, OPZIONI_MESI, titoloCorso } from './gestione/comuni';
+import { CellaTitolo, nominativo, nomeUtente, oggiAnnoMese, opzioniAnni, OPZIONI_MESI } from './gestione/comuni';
 import '../../styles/gestione.css';
 
 const TONO_GRAVITA: Record<Anomalia['gravita'], 'pericolo' | 'avviso' | 'info'> = { alta: 'pericolo', media: 'avviso', bassa: 'info' };
@@ -86,7 +93,6 @@ export function Chiusura() {
   // ---------------------------------------------------------------------------
   const chiudi = async () => {
     if (!s) return;
-    const perStato = conteggioPerStato(s.aperte.map((r) => r.stato));
     const esito = await conferma({
       titolo: `Chiudere ${nomePeriodo}?`,
       pericolo: s.aperte.length > 0,
@@ -95,14 +101,9 @@ export function Chiusura() {
         <>
           {s.aperte.length > 0 ? (
             <Avviso tono="pericolo" titolo={`Attenzione: ${plurale(s.aperte.length, 'richiesta è ancora aperta', 'richieste sono ancora aperte')}`}>
-              <ul className="elenco-compatto">
-                {perStato.map(([st, n]) => (
-                  <li key={st}>
-                    {n} – {st}
-                  </li>
-                ))}
-              </ul>
-              <p style={{ margin: '6px 0 0' }}>
+              <p style={{ margin: '0 0 8px' }}>Richieste aperte per coordinatore:</p>
+              <ElencoPerCoordinatore gruppi={s.apertePerCoordinatore} />
+              <p style={{ margin: '8px 0 0' }}>
                 Dopo la chiusura non potranno più essere approvate, validate, modificate né annullate e resteranno escluse dal file paghe di questo
                 mese, salvo riapertura da parte di un amministratore.
               </p>
@@ -133,7 +134,8 @@ export function Chiusura() {
         <>
           <p>
             Il file CSV per l’Ufficio Paghe conterrà {plurale(s.daInviare, 'richiesta validata', 'richieste validate')} da HR e incluse nella chiusura di{' '}
-            {nomePeriodo}.
+            {nomePeriodo}, con una colonna per ogni voce: ore retribuite, ore gettone, ore non retribuite, ore di diritto allo studio e ore di riqualifica
+            professionale.
           </p>
           <p>
             Le richieste passeranno allo stato «Inviata a Payroll», il file sarà archiviato
@@ -205,8 +207,12 @@ export function Chiusura() {
               <div style={{ display: 'grid', gap: 12 }}>
                 {futuro && <Avviso tono="info">Il mese non è ancora iniziato: non si può chiudere.</Avviso>}
                 {!chiuso && !futuro && s.aperte.length > 0 && (
-                  <Avviso tono="avviso" titolo={`${plurale(s.aperte.length, 'richiesta ancora aperta', 'richieste ancora aperte')}`}>
-                    Prima di chiudere verifica le richieste aperte qui sotto: dopo la chiusura non saranno più gestibili per questo mese.
+                  <Avviso
+                    tono="avviso"
+                    titolo={`${plurale(s.aperte.length, 'richiesta ancora aperta', 'richieste ancora aperte')} di ${plurale(s.apertePerCoordinatore.length, 'coordinatore', 'coordinatori')}`}
+                  >
+                    Prima di chiudere verifica qui sotto le richieste aperte, raggruppate per coordinatore: dopo la chiusura non saranno più gestibili per questo
+                    mese.
                   </Avviso>
                 )}
                 {chiuso && s.daInviare === 0 && s.chiusura.filePaghe.length > 0 && (
@@ -235,7 +241,8 @@ export function Chiusura() {
                 {!admin && chiuso && <p className="testo-secondario testo-piccolo" style={{ margin: 0 }}>Solo un amministratore può riaprire un mese chiuso.</p>}
                 {fileNuovo && (
                   <Avviso tono="successo" titolo={`File generato: ${fileNuovo.nome}`}>
-                    {plurale(fileNuovo.righe, 'riga', 'righe')} · {f.numero(fileNuovo.totaleOreRetribuite)} h retribuite · {f.numero(fileNuovo.totaleOreGettone)} h gettone.
+                    {plurale(fileNuovo.righe, 'riga', 'righe')} · {f.numero(fileNuovo.totaleOreRetribuite)} h retribuite · {f.numero(fileNuovo.totaleOreGettone)} h gettone ·{' '}
+                    {f.numero(fileNuovo.totaleOreNonRetribuite)} h non retribuite · {f.numero(fileNuovo.totaleOrePermessi)} h di permesso.
                     <div style={{ marginTop: 8 }}>
                       <Pulsante piccolo icona="scarica" onClick={() => f.scaricaFile(fileNuovo.nome, fileNuovo.contenuto)}>
                         Scarica ora
@@ -247,6 +254,7 @@ export function Chiusura() {
             </Scheda>
 
             <SezioneAperte s={s} />
+            <AnteprimaPaghe s={s} anno={anno} mese={mese} lavoratori={anagrafiche.dati?.lavoratori} />
             <SezioneAnomalie anomalie={s.anomalie} lavoratori={anagrafiche.dati?.lavoratori} onAggiorna={ricaricaTutto} />
 
             <Scheda titolo="File paghe generati" icona="file">
@@ -265,6 +273,8 @@ export function Chiusura() {
                     { titolo: 'Righe', valore: (x) => x.righe, numerica: true },
                     { titolo: 'Ore retribuite', valore: (x) => f.numero(x.totaleOreRetribuite), numerica: true },
                     { titolo: 'Ore gettone', valore: (x) => f.numero(x.totaleOreGettone), numerica: true },
+                    { titolo: 'Ore non retribuite', valore: (x) => f.numero(x.totaleOreNonRetribuite ?? 0), numerica: true },
+                    { titolo: 'Ore di permesso', valore: (x) => f.numero(x.totaleOrePermessi ?? 0), numerica: true },
                   ]}
                   azioni={(x) => <PulsanteIcona icona="scarica" etichetta={`Scarica ${x.nome}`} disabled={azione.inCorso} onClick={() => void scarica(s.chiusura.periodo, x)} />}
                 />
@@ -315,6 +325,8 @@ export function Chiusura() {
               { titolo: 'Richieste', valore: (c) => c.numeroRichieste, numerica: true },
               { titolo: 'Ore retribuite', valore: (c) => f.numero(c.totaleOreRiconosciute), numerica: true },
               { titolo: 'Ore gettone', valore: (c) => f.numero(c.totaleGettoni), numerica: true },
+              { titolo: 'Ore non retribuite', valore: (c) => f.numero(c.totaleOreNonRetribuite ?? 0), numerica: true, secondaria: true },
+              { titolo: 'Ore di permesso', valore: (c) => f.numero(c.totaleOrePermessi ?? 0), numerica: true, secondaria: true },
               { titolo: 'File paghe', valore: (c) => c.filePaghe.length, numerica: true, secondaria: true },
             ]}
             azioni={(c) => <PulsanteIcona icona="visualizza" etichetta={`Apri ${f.periodo(c.anno, c.mese)}`} onClick={() => cambiaPeriodo({ anno: c.anno, mese: c.mese })} />}
@@ -383,13 +395,26 @@ function SchedaStato({ s, nomePeriodo, utenti, futuro }: { s: StatoMese; nomePer
             <dt>Totale ore gettone</dt>
             <dd>{f.ore(c.totaleGettoni)}</dd>
           </div>
+          <div>
+            <dt>Totale ore non retribuite</dt>
+            <dd>{f.ore(c.totaleOreNonRetribuite ?? 0)}</dd>
+          </div>
+          <div>
+            <dt>Totale ore di permesso</dt>
+            <dd>{f.ore(c.totaleOrePermessi ?? 0)}</dd>
+          </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <dt>Note HR</dt>
             <dd>{c.noteHR || '—'}</dd>
           </div>
         </dl>
         <div className="indicatori indicatori-compatti">
-          <Indicatore etichetta="Richieste ancora aperte" valore={s.aperte.length} tono={s.aperte.length ? 'avviso' : 'successo'} />
+          <Indicatore
+            etichetta="Richieste ancora aperte"
+            valore={s.aperte.length}
+            nota={s.aperte.length ? `Di ${plurale(s.apertePerCoordinatore.length, 'coordinatore', 'coordinatori')}` : undefined}
+            tono={s.aperte.length ? 'avviso' : 'successo'}
+          />
           <Indicatore etichetta="Validate, da includere" valore={s.validate} nota="Saranno incluse alla chiusura" tono="info" />
           <Indicatore etichetta="Pronte per il file paghe" valore={s.daInviare} tono={s.daInviare ? 'avviso' : 'neutro'} />
           <Indicatore etichetta="Anomalie" valore={s.anomalie.length} tono={s.anomalie.some((a) => a.gravita === 'alta') ? 'pericolo' : s.anomalie.length ? 'avviso' : 'successo'} />
@@ -400,11 +425,102 @@ function SchedaStato({ s, nomePeriodo, utenti, futuro }: { s: StatoMese; nomePer
 }
 
 // ---------------------------------------------------------------------------
-//  Richieste ancora aperte
+//  Richieste ancora aperte, raggruppate per coordinatore
 // ---------------------------------------------------------------------------
+/** Chiave usata per filtrare l'elenco: il login del coordinatore, o '-' per le richieste senza coordinatore. */
+const chiaveCoordinatore = (login?: string) => login ?? '-';
+
+/** Dettaglio in parole di un gruppo, es. "4 in attesa del coordinatore, 1 in integrazione dal lavoratore". */
+function dettaglioGruppo(g: Pick<ApertePerCoordinatore, 'inAttesaCoordinatore' | 'inIntegrazione' | 'inAttesaHR'>): string {
+  return [
+    g.inAttesaCoordinatore && `${g.inAttesaCoordinatore} in attesa del coordinatore`,
+    g.inIntegrazione && `${g.inIntegrazione} in integrazione dal lavoratore`,
+    g.inAttesaHR && `${g.inAttesaHR} in attesa di HR`,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/** Elenco compatto per il dialogo di conferma della chiusura: un coordinatore per riga. */
+function ElencoPerCoordinatore({ gruppi }: { gruppi: ApertePerCoordinatore[] }) {
+  return (
+    <ul className="elenco-coordinatori">
+      {gruppi.map((g) => (
+        <li key={chiaveCoordinatore(g.coordinatoreLogin)}>
+          <strong>{g.coordinatoreNome}</strong> – {plurale(g.totale, 'richiesta aperta', 'richieste aperte')}
+          <span className="cella-secondaria">{dettaglioGruppo(g)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const RIGA_TOTALE = '__totale__';
+
+/**
+ * Riepilogo delle richieste aperte per coordinatore: chi deve ancora esprimersi e su quante richieste.
+ * Da ogni riga si filtra l'elenco sottostante sulle richieste di quel coordinatore.
+ */
+function TabellaPerCoordinatore({ gruppi, selezionato, onSeleziona }: { gruppi: ApertePerCoordinatore[]; selezionato: string; onSeleziona: (chiave: string) => void }) {
+  const totale: ApertePerCoordinatore = gruppi.reduce(
+    (t, g) => ({ ...t, inAttesaCoordinatore: t.inAttesaCoordinatore + g.inAttesaCoordinatore, inIntegrazione: t.inIntegrazione + g.inIntegrazione, inAttesaHR: t.inAttesaHR + g.inAttesaHR, totale: t.totale + g.totale }),
+    { coordinatoreLogin: RIGA_TOTALE, coordinatoreNome: 'Totale', inAttesaCoordinatore: 0, inIntegrazione: 0, inAttesaHR: 0, totale: 0 },
+  );
+  const righe = gruppi.length > 1 ? [...gruppi, totale] : gruppi;
+  const eTotale = (g: ApertePerCoordinatore) => g.coordinatoreLogin === RIGA_TOTALE;
+  const numero = (g: ApertePerCoordinatore, n: number, evidenzia = false) =>
+    n ? eTotale(g) || evidenzia ? <strong className="riga-totale">{n}</strong> : n : <span className="testo-secondario">–</span>;
+  return (
+    <div className="gestione-tabella tabella-compatta">
+      <Tabella
+        didascalia="Richieste ancora aperte per coordinatore"
+        righe={righe}
+        chiave={(g) => chiaveCoordinatore(g.coordinatoreLogin)}
+        colonne={[
+          {
+            titolo: 'Coordinatore',
+            valore: (g) => (
+              <span className="cella-blocco">
+                <span className="cella-principale testo-a-capo">{g.coordinatoreNome}</span>
+                {selezionato === chiaveCoordinatore(g.coordinatoreLogin) && (
+                  <span className="cella-secondaria">
+                    <Etichetta tono="info">Elenco filtrato</Etichetta>
+                  </span>
+                )}
+              </span>
+            ),
+          },
+          { titolo: 'In attesa del coordinatore', valore: (g) => numero(g, g.inAttesaCoordinatore, true), numerica: true },
+          { titolo: 'In integrazione dal lavoratore', valore: (g) => numero(g, g.inIntegrazione), numerica: true },
+          { titolo: 'In attesa di HR', valore: (g) => numero(g, g.inAttesaHR), numerica: true },
+          { titolo: 'Totale aperte', valore: (g) => <strong className="riga-totale">{g.totale}</strong>, numerica: true },
+        ]}
+        azioni={(g) => {
+          if (eTotale(g)) return null;
+          const chiave = chiaveCoordinatore(g.coordinatoreLogin);
+          const attivo = selezionato === chiave;
+          return (
+            <Pulsante variante="secondario" piccolo aria-pressed={attivo} onClick={() => onSeleziona(attivo ? '' : chiave)}>
+              {attivo ? 'Mostra tutte' : 'Mostra le richieste'}
+              <span className="sr-only"> di {g.coordinatoreNome}</span>
+            </Pulsante>
+          );
+        }}
+      />
+    </div>
+  );
+}
+
 function SezioneAperte({ s }: { s: StatoMese }) {
-  const perStato = conteggioPerStato(s.aperte.map((r) => r.stato));
+  const [coordinatore, setCoordinatore] = useState('');
   const daValidare = s.aperte.filter((r) => r.stato === 'In attesa di validazione HR' || r.stato === 'Approvata dal coordinatore').length;
+  // se il coordinatore selezionato non ha più richieste aperte (dopo un aggiornamento) si torna all'elenco completo
+  const filtro = s.apertePerCoordinatore.some((g) => chiaveCoordinatore(g.coordinatoreLogin) === coordinatore) ? coordinatore : '';
+  const elenco = (filtro ? s.aperte.filter((r) => chiaveCoordinatore(r.coordinatoreLogin) === filtro) : s.aperte)
+    .slice()
+    .sort((a, b) => (a.coordinatoreNome ?? '').localeCompare(b.coordinatoreNome ?? '', 'it') || a.stato.localeCompare(b.stato) || a.dataSessione.localeCompare(b.dataSessione));
+  const nomeFiltro = s.apertePerCoordinatore.find((g) => chiaveCoordinatore(g.coordinatoreLogin) === filtro)?.coordinatoreNome;
+  const perStato = conteggioPerStato(elenco.map((r) => r.stato));
   return (
     <Scheda
       titolo={`Richieste ancora aperte (${s.aperte.length})`}
@@ -420,36 +536,172 @@ function SezioneAperte({ s }: { s: StatoMese }) {
       {s.aperte.length === 0 ? (
         <Vuoto titolo="Nessuna richiesta aperta: il mese è pronto per la chiusura." icona="approva" />
       ) : (
-        <div style={{ display: 'grid', gap: 10 }}>
-          <div className="riga-flessibile">
-            {perStato.map(([st, n]) => (
-              <span key={st} className="riga-flessibile" style={{ gap: 4 }}>
-                <BadgeStato stato={st} /> <strong>{n}</strong>
-              </span>
-            ))}
-          </div>
-          <div className="gestione-tabella tabella-compatta">
-            <Tabella
-              didascalia="Richieste ancora aperte nel mese"
-              righe={[...s.aperte].sort((a, b) => a.stato.localeCompare(b.stato) || a.dataSessione.localeCompare(b.dataSessione))}
-              chiave={(r) => r.id}
-              onApri={(r) => naviga(ROTTE.dettaglio(r.id))}
-              colonne={[
-                { titolo: 'Richiesta', valore: (r) => <span className="cella-principale">{r.numero}</span> },
-                { titolo: 'Lavoratore', valore: (r) => nominativo(r) },
-                { titolo: 'Coordinatore', valore: (r) => r.coordinatoreNome ?? '—', secondaria: true },
-                { titolo: 'Corso', valore: (r) => <span className="cella-titolo-corso testo-a-capo">{titoloCorso(r)}</span>, secondaria: true },
-                { titolo: 'Data corso', valore: (r) => f.data(r.dataSessione) },
-                { titolo: 'Stato', valore: (r) => <BadgeStato stato={r.stato} /> },
-              ]}
-              azioni={(r) => <PulsanteIcona icona="visualizza" etichetta={`Apri ${r.numero}`} onClick={() => naviga(ROTTE.dettaglio(r.id))} />}
-            />
-          </div>
+        <div style={{ display: 'grid', gap: 16 }}>
+          <section aria-label="Richieste aperte per coordinatore" style={{ display: 'grid', gap: 8 }}>
+            <h3 className="testatina">Per coordinatore</h3>
+            <p className="testo-secondario testo-piccolo" style={{ margin: 0 }}>
+              Chi deve ancora esprimersi, dal più carico: le richieste «in attesa del coordinatore» sono quelle da sollecitare prima della chiusura.
+            </p>
+            <TabellaPerCoordinatore gruppi={s.apertePerCoordinatore} selezionato={filtro} onSeleziona={setCoordinatore} />
+          </section>
+          <section aria-label="Elenco delle richieste aperte" style={{ display: 'grid', gap: 8 }}>
+            <h3 className="testatina">{nomeFiltro ? `Richieste aperte di ${nomeFiltro} (${elenco.length})` : `Tutte le richieste aperte (${elenco.length})`}</h3>
+            <div className="riga-flessibile">
+              {perStato.map(([st, n]) => (
+                <span key={st} className="riga-flessibile" style={{ gap: 4 }}>
+                  <BadgeStato stato={st} /> <strong>{n}</strong>
+                </span>
+              ))}
+            </div>
+            <div className="gestione-tabella tabella-compatta">
+              <Tabella
+                didascalia="Richieste ancora aperte nel mese"
+                righe={elenco}
+                chiave={(r) => r.id}
+                onApri={(r) => naviga(ROTTE.dettaglio(r.id))}
+                colonne={[
+                  { titolo: 'Coordinatore', valore: (r) => r.coordinatoreNome ?? 'Senza coordinatore' },
+                  { titolo: 'Richiesta', valore: (r) => <span className="cella-principale">{r.numero}</span> },
+                  { titolo: 'Lavoratore', valore: (r) => nominativo(r) },
+                  { titolo: 'Tipologia e corso / attività', valore: (r) => <CellaTitolo r={r} />, secondaria: true },
+                  { titolo: 'Data', valore: (r) => f.data(r.dataSessione) },
+                  { titolo: 'Stato', valore: (r) => <BadgeStato stato={r.stato} /> },
+                ]}
+                azioni={(r) => <PulsanteIcona icona="visualizza" etichetta={`Apri ${r.numero}`} onClick={() => naviga(ROTTE.dettaglio(r.id))} />}
+              />
+            </div>
+          </section>
           <p className="testo-secondario testo-piccolo" style={{ margin: 0 }}>
             Le bozze non ancora inviate dai lavoratori non sono conteggiate.
           </p>
         </div>
       )}
+    </Scheda>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Anteprima del file per l'Ufficio Paghe
+// ---------------------------------------------------------------------------
+const RIGHE_ANTEPRIMA = 12;
+
+/**
+ * Anteprima delle righe che finiranno nel file paghe, con le stesse colonne del CSV:
+ * prima della chiusura mostra le richieste già validate da HR; a mese chiuso quelle incluse
+ * nella chiusura e non ancora inviate.
+ */
+function AnteprimaPaghe({ s, anno, mese, lavoratori }: { s: StatoMese; anno: number; mese: number; lavoratori: Lavoratore[] | undefined }) {
+  const { backend } = useApp();
+  const chiuso = s.chiusura.stato === 'Chiuso';
+  const quante = chiuso ? s.daInviare : s.validate;
+  const [tutte, setTutte] = useState(false);
+  // si ricarica quando cambia il numero di richieste interessate (es. dopo la chiusura o la generazione del file)
+  const richieste = useCarica(async () => (quante > 0 ? backend.getRichieste('tutte', { anno, mese }) : []), [backend, anno, mese, quante, chiuso]);
+
+  const righe = useMemo(() => {
+    const incluse = (richieste.dati ?? []).filter((r) =>
+      chiuso ? r.stato === 'Inclusa nel riepilogo mensile' && r.periodoChiusura === s.chiusura.periodo : r.stato === 'Validata da HR',
+    );
+    return righePaghe(incluse, lavoratori ?? []);
+  }, [richieste.dati, lavoratori, chiuso, s.chiusura.periodo]);
+  const totali = useMemo(() => totaliPaghe(righe), [righe]);
+  const dirittoStudio = righe.reduce((t, r) => t + r.oreDirittoStudio, 0);
+  const riqualifica = righe.reduce((t, r) => t + r.oreRiqualifica, 0);
+
+  if (quante === 0) return null;
+  const visibili = tutte ? righe : righe.slice(0, RIGHE_ANTEPRIMA);
+  const zero = (n: number) => (n ? f.numero(n) : <span className="testo-secondario">–</span>);
+  return (
+    <Scheda titolo={`Anteprima del file paghe (${righe.length})`} icona="file">
+      <div style={{ display: 'grid', gap: 12 }}>
+        <p className="testo-secondario" style={{ margin: 0 }}>
+          {chiuso
+            ? 'Righe che saranno scritte nel file alla generazione: richieste validate da HR e incluse nella chiusura.'
+            : 'Richieste già validate da HR: alla chiusura del mese saranno incluse nel riepilogo e poi nel file paghe. Le richieste ancora aperte restano escluse.'}
+        </p>
+        {richieste.errore ? (
+          <ErroreCaricamento messaggio={richieste.errore} onRiprova={richieste.ricarica} />
+        ) : richieste.caricamento && !richieste.dati ? (
+          <Caricamento testo="Preparazione dell’anteprima…" />
+        ) : (
+          <>
+            <div className="indicatori indicatori-compatti" role="group" aria-label="Totali del file paghe">
+              <Indicatore etichetta="Ore retribuite" valore={f.numero(totali.oreRetribuite)} tono="successo" />
+              <Indicatore etichetta="Ore gettone" valore={f.numero(totali.oreGettone)} tono="successo" />
+              <Indicatore etichetta="Ore non retribuite" valore={f.numero(totali.oreNonRetribuite)} />
+              <Indicatore etichetta="Ore diritto allo studio" valore={f.numero(dirittoStudio)} tono="info" />
+              <Indicatore etichetta="Ore riqualifica professionale" valore={f.numero(riqualifica)} tono="info" />
+            </div>
+            <div className="gestione-tabella tabella-compatta">
+              <Tabella<RigaPaghe>
+                didascalia="Anteprima delle righe del file paghe"
+                righe={visibili}
+                chiave={(r) => r.idRichiesta}
+                vuoto="Nessuna riga da mostrare."
+                colonne={[
+                  {
+                    titolo: 'Lavoratore',
+                    valore: (r) => (
+                      <span className="cella-blocco">
+                        <span className="cella-principale">
+                          {r.cognome} {r.nome}
+                        </span>
+                        <span className="cella-secondaria">{r.codiceFiscale || <strong style={{ color: 'var(--pericolo)' }}>Codice fiscale mancante</strong>}</span>
+                      </span>
+                    ),
+                  },
+                  {
+                    titolo: 'Servizio',
+                    secondaria: true,
+                    valore: (r) => (
+                      <span className="cella-blocco testo-a-capo">
+                        {r.servizio}
+                        <span className="cella-secondaria">{r.centroDiCosto}</span>
+                      </span>
+                    ),
+                  },
+                  {
+                    titolo: 'Tipologia e titolo',
+                    valore: (r) => (
+                      <span className="cella-titolo-corso testo-a-capo">
+                        {r.titoloCorso}
+                        <span className="cella-secondaria">{r.tipologia === 'Formazione' ? 'Formazione' : <Etichetta tono="info">{r.tipologia}</Etichetta>}</span>
+                      </span>
+                    ),
+                  },
+                  { titolo: 'Data', valore: (r) => f.data(r.dataCorso) },
+                  { titolo: 'Ore retribuite', valore: (r) => zero(r.oreRetribuite), numerica: true },
+                  { titolo: 'Ore gettone', valore: (r) => zero(r.oreGettone), numerica: true },
+                  { titolo: 'Ore non retribuite', valore: (r) => zero(r.oreNonRetribuite), numerica: true },
+                  { titolo: 'Ore diritto allo studio', valore: (r) => zero(r.oreDirittoStudio), numerica: true },
+                  { titolo: 'Ore riqualifica professionale', valore: (r) => zero(r.oreRiqualifica), numerica: true },
+                  { titolo: 'ID richiesta', valore: (r) => r.idRichiesta, secondaria: true },
+                ]}
+              />
+            </div>
+            {righe.length > RIGHE_ANTEPRIMA && (
+              <div className="riga-flessibile">
+                <span className="testo-secondario testo-piccolo">
+                  Mostrate {visibili.length} di {righe.length} righe
+                </span>
+                <Pulsante variante="secondario" piccolo onClick={() => setTutte(!tutte)}>
+                  {tutte ? 'Mostra meno righe' : 'Mostra tutte le righe'}
+                </Pulsante>
+              </div>
+            )}
+            <details className="colonne-file">
+              <summary>Colonne del file CSV ({INTESTAZIONE_PAGHE.length})</summary>
+              <p className="testo-piccolo" style={{ margin: '8px 0 0' }}>
+                {INTESTAZIONE_PAGHE.join(' · ')}
+              </p>
+              <p className="testo-secondario testo-piccolo" style={{ margin: '6px 0 0' }}>
+                Separatore «;», decimali con la virgola, codifica UTF-8: il file si apre direttamente in Excel. Per i permessi le ore validate sono nella colonna
+                del proprio tipo; le colonne retribuite e gettone restano a zero.
+              </p>
+            </details>
+          </>
+        )}
+      </div>
     </Scheda>
   );
 }

@@ -9,6 +9,7 @@
 import type {
   AssegnazioneRuolo,
   ChiusuraMensile,
+  CorrezioneCorsoInput,
   Corso,
   FilePaghe,
   FiltriRichieste,
@@ -16,6 +17,7 @@ import type {
   Notifica,
   Richiesta,
   Sessione,
+  SituazioneMonteOre,
   Struttura,
   VoceRegistro,
 } from '../../domain';
@@ -29,6 +31,7 @@ import {
   type DecisioneMultiplaInput,
   type DettaglioRichiesta,
   type LavoratoreTeam,
+  type MonteOreInput,
   type Profilo,
   type RisultatoMultiplo,
   type SalvaRichiestaInput,
@@ -124,8 +127,8 @@ export class BackendHttp implements Backend {
   aggiornaProfilo(dati: { emailContatto?: string; codiceFiscale?: string }) {
     return this.chiama<Profilo>('PATCH', '/profilo', dati);
   }
-  segnalaVariazione(testo: string) {
-    return this.chiama<Profilo>('POST', '/profilo/segnalazioni', { testo });
+  segnalaVariazione(testo: string, lavoratoreId?: string) {
+    return this.chiama<Profilo>('POST', '/profilo/segnalazioni', { testo, lavoratoreId });
   }
 
   // ----------------------------------------------------------- consultazione
@@ -181,6 +184,17 @@ export class BackendHttp implements Backend {
   }
   decisioneHR(input: DecisioneMultiplaInput) {
     return this.chiama<RisultatoMultiplo>('POST', '/richieste/decisione-hr', input);
+  }
+  correggiCorso(richiestaId: string, dati: CorrezioneCorsoInput) {
+    return this.chiama<Richiesta>('POST', `/richieste/${encodeURIComponent(richiestaId)}/correzione-corso`, dati);
+  }
+
+  // -------------------------------------------------- monte ore dei permessi
+  getMontiOre() {
+    return this.chiama<SituazioneMonteOre[]>('GET', '/monti-ore');
+  }
+  salvaMonteOre(m: MonteOreInput) {
+    return m.id ? this.chiama<SituazioneMonteOre>('PUT', `/monti-ore/${encodeURIComponent(m.id)}`, m) : this.chiama<SituazioneMonteOre>('POST', '/monti-ore', m);
   }
 
   // ----------------------------------------------------- chiusure e paghe

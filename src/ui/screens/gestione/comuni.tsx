@@ -8,10 +8,14 @@ import {
   ESCLUSI_DAI_CONTROLLI,
   ETICHETTA_ANOMALIA,
   IN_ATTESA_COORDINATORE,
+  isPermesso,
   NOMI_MESI,
   oggiRoma,
+  TIPOLOGIE,
+  titoloRichiesta,
   type ChiusuraMensile,
   type Richiesta,
+  type Tipologia,
   type UtenteDirectory,
 } from '../../../domain';
 import { Icona, type NomeIcona } from '../../components/Icona';
@@ -22,8 +26,29 @@ import * as f from '../../format';
 export const TOLLERANZA_ORE = 0.001;
 
 export const nominativo = (p: { cognome: string; nome: string }) => `${p.cognome} ${p.nome}`;
-export const titoloCorso = (r: Pick<Richiesta, 'titoloCorso' | 'titoloCorsoLibero'>) => r.titoloCorsoLibero || r.titoloCorso;
 export const haAttestato = (r: Richiesta) => r.allegati.some((a) => a.tipo === 'Attestato');
+/** Corso esterno (ente diverso dal datore di lavoro): è l'unico caso in cui si può allegare l'attestato. */
+export const isCorsoEsterno = (r: Pick<Richiesta, 'tipologia' | 'ente'>) => r.tipologia === 'Formazione' && r.ente === 'Committente o altro soggetto';
+
+/** Opzioni del filtro "Tipologia": formazione e i due permessi con monte ore. */
+export const OPZIONI_TIPOLOGIA: Opzione[] = TIPOLOGIE.map((t) => ({ valore: t, etichetta: t }));
+export const comeTipologia = (v: string): Tipologia | undefined => ((TIPOLOGIE as readonly string[]).includes(v) ? (v as Tipologia) : undefined);
+
+/**
+ * Cella "tipologia e titolo": per la formazione il titolo del corso con il codice, per i permessi
+ * l'attività svolta con l'etichetta del tipo di permesso.
+ */
+export function CellaTitolo({ r }: { r: Richiesta }) {
+  const permesso = isPermesso(r);
+  return (
+    <span className="cella-titolo-corso testo-a-capo">
+      {permesso ? r.descrizioneAttivita || r.tipologia : titoloRichiesta(r)}
+      <span className="cella-secondaria">
+        {permesso ? <Etichetta tono="info">{r.tipologia}</Etichetta> : <>Formazione{r.codiceCorso ? ` · ${r.codiceCorso}` : ''}</>}
+      </span>
+    </span>
+  );
+}
 
 /** Anno e mese correnti nel fuso di Roma. */
 export function oggiAnnoMese(): { anno: number; mese: number } {
@@ -82,18 +107,22 @@ export function segnaliRichiesta(r: Richiesta, extra: { cfMancante?: boolean; or
   const out: Segnale[] = [];
   const controllata = r.stato !== 'Bozza' && r.stato !== 'Annullata' && !ESCLUSI_DAI_CONTROLLI.has(r.stato);
   if (r.possibileDuplicato && controllata) out.push({ chiave: 'duplicato', testo: ETICHETTA_ANOMALIA.duplicato, tono: 'pericolo', icona: 'duplicato' });
-  if (controllata && !haAttestato(r)) out.push({ chiave: 'attestato', testo: ETICHETTA_ANOMALIA.attestatoMancante, tono: 'avviso', icona: 'allegato' });
+  // l'attestato si allega solo per i corsi esterni ed è facoltativo: la mancanza è solo un'informazione
+  if (controllata && isCorsoEsterno(r) && !haAttestato(r)) out.push({ chiave: 'attestato', testo: ETICHETTA_ANOMALIA.attestatoMancante, tono: 'info', icona: 'allegato' });
   if (IN_ATTESA_COORDINATORE.has(r.stato)) {
     if (r.segnalataHR) out.push({ chiave: 'sollecito', testo: `Segnalata a HR (${r.giorniAttesa} gg lavorativi)`, tono: 'pericolo', icona: 'orologio' });
     else if (r.giorniAttesa >= 3) out.push({ chiave: 'attesa', testo: `In attesa da ${r.giorniAttesa} gg lavorativi`, tono: 'avviso', icona: 'orologio' });
   }
   if (!r.coordinatoreLogin && controllata) out.push({ chiave: 'coordinatore', testo: ETICHETTA_ANOMALIA.senzaCoordinatore, tono: 'pericolo', icona: 'team' });
   if (extra.cfMancante) out.push({ chiave: 'cf', testo: ETICHETTA_ANOMALIA.codiceFiscaleMancante, tono: 'pericolo', icona: 'utente' });
-  if (extra.oreRidotte) out.push({ chiave: 'ridotte', testo: 'Ore ridotte dal coordinatore rispetto alla richiesta', tono: 'info', icona: 'info' });
+  if (extra.oreRidotte) out.push({ chiave: 'ridotte', testo: 'Ore riconosciute dal coordinatore inferiori a quelle richieste', tono: 'info', icona: 'info' });
   return out;
 }
 
-/** Il coordinatore ha riconosciuto meno ore di quelle richieste. */
+/**
+ * Il coordinatore ha riconosciuto meno ore di quelle richieste (la differenza è passata tra le
+ * ore da non retribuire o, per i permessi, tra le ore non riconosciute).
+ */
 export function oreRidotteDalCoordinatore(r: Richiesta): boolean {
   if (r.oreRetribuiteCoord === undefined && r.oreGettoneCoord === undefined) return false;
   const richieste = r.oreRetribuiteRichieste + r.oreGettoneRichieste;
@@ -130,7 +159,7 @@ export function Segnali({ segnali, compatto }: { segnali: Segnale[]; compatto?: 
 export function LegendaSegnali() {
   const voci: Segnale[] = [
     { chiave: 'duplicato', testo: ETICHETTA_ANOMALIA.duplicato, tono: 'pericolo', icona: 'duplicato' },
-    { chiave: 'attestato', testo: ETICHETTA_ANOMALIA.attestatoMancante, tono: 'avviso', icona: 'allegato' },
+    { chiave: 'attestato', testo: ETICHETTA_ANOMALIA.attestatoMancante, tono: 'info', icona: 'allegato' },
     { chiave: 'cf', testo: ETICHETTA_ANOMALIA.codiceFiscaleMancante, tono: 'pericolo', icona: 'utente' },
     { chiave: 'sollecito', testo: 'Attesa prolungata / segnalata a HR', tono: 'avviso', icona: 'orologio' },
     { chiave: 'ridotte', testo: 'Ore ridotte dal coordinatore', tono: 'info', icona: 'info' },
@@ -151,18 +180,68 @@ export function LegendaSegnali() {
   );
 }
 
-/** Ore retribuite e gettone su due righe (cella numerica). */
-export function CoppiaOre({ retribuite, gettone }: { retribuite?: number; gettone?: number }) {
-  if (retribuite === undefined && gettone === undefined) return <span className="testo-secondario">—</span>;
+/** Le tre voci in cui si ripartiscono le ore frequentate. */
+export interface Voci {
+  retribuite?: number;
+  gettone?: number;
+  nonRetribuite?: number;
+}
+export const vociRichieste = (r: Richiesta): Voci => ({ retribuite: r.oreRetribuiteRichieste, gettone: r.oreGettoneRichieste, nonRetribuite: r.oreNonRetribuiteRichieste });
+export const vociCoordinatore = (r: Richiesta): Voci => ({ retribuite: r.oreRetribuiteCoord, gettone: r.oreGettoneCoord, nonRetribuite: r.oreNonRetribuiteCoord });
+export const vociHR = (r: Richiesta): Voci => ({ retribuite: r.oreRetribuiteHR, gettone: r.oreGettoneHR, nonRetribuite: r.oreNonRetribuiteHR });
+
+/** Testo breve delle voci, es. "6 retr. · 1 gett. · 1 non retr." oppure "4 permesso · 0 non ric.". */
+export function testoVoci(tipologia: Tipologia, v: Voci): string {
+  if (v.retribuite === undefined && v.gettone === undefined && v.nonRetribuite === undefined) return '—';
+  if (tipologia !== 'Formazione') return `${f.numero(v.retribuite ?? 0)} permesso · ${f.numero(v.nonRetribuite ?? 0)} non ric.`;
+  return `${f.numero(v.retribuite ?? 0)} retr. · ${f.numero(v.gettone ?? 0)} gett. · ${f.numero(v.nonRetribuite ?? 0)} non retr.`;
+}
+
+/**
+ * Voci delle ore su più righe (cella numerica).
+ * Formazione: retribuite, gettone, da non retribuire. Permessi: ore di permesso (a carico del
+ * monte ore) e ore non riconosciute; il gettone non è previsto.
+ */
+export function VociOre({ tipologia, retribuite, gettone, nonRetribuite }: Voci & { tipologia: Tipologia }) {
+  if (retribuite === undefined && gettone === undefined && nonRetribuite === undefined) return <span className="testo-secondario">—</span>;
+  if (tipologia !== 'Formazione') {
+    return (
+      <span className="ore-voci">
+        <span>
+          {f.numero(retribuite ?? 0)} <small>permesso</small>
+        </span>
+        <span>
+          {f.numero(nonRetribuite ?? 0)} <small>non ric.</small>
+        </span>
+      </span>
+    );
+  }
   return (
-    <span className="ore-coppia">
+    <span className="ore-voci">
       <span>
         {f.numero(retribuite ?? 0)} <small>retr.</small>
       </span>
       <span>
         {f.numero(gettone ?? 0)} <small>gett.</small>
       </span>
+      <span>
+        {f.numero(nonRetribuite ?? 0)} <small>non retr.</small>
+      </span>
     </span>
+  );
+}
+
+/** Legenda delle abbreviazioni usate nelle celle delle ore. */
+export function LegendaVoci() {
+  return (
+    <p className="legenda" aria-label="Legenda delle voci delle ore">
+      <strong>Ore:</strong>
+      <span>retr. = retribuite</span>
+      <span>gett. = a gettone</span>
+      <span>non retr. = da non retribuire</span>
+      <span>permesso = ore scalate dal monte ore (diritto allo studio, riqualifica professionale)</span>
+      <span>non ric. = ore di permesso non riconosciute</span>
+    </p>
   );
 }
 
@@ -171,6 +250,7 @@ export function CoppiaOre({ retribuite, gettone }: { retribuite?: number; getton
 // ---------------------------------------------------------------------------
 export const INTESTAZIONE_CSV_RICHIESTE = [
   'ID richiesta',
+  'Tipologia',
   'Cognome',
   'Nome',
   'Utente Microsoft 365',
@@ -179,28 +259,52 @@ export const INTESTAZIONE_CSV_RICHIESTE = [
   'Centro di costo',
   'Coordinatore',
   'Codice corso',
-  'Titolo corso',
+  'Titolo corso o attività',
   'Ente erogatore',
   'Modalità',
-  'Data corso',
+  'Data',
   'Mese',
   'Anno',
+  'Ora inizio',
+  'Ora fine',
+  'Pausa (minuti)',
   'Ore frequentate',
   'Ore retribuite richieste',
   'Ore gettone richieste',
+  'Ore non retribuite richieste',
+  'Ore permesso richieste',
   'Ore retribuite approvate coordinatore',
   'Ore gettone approvate coordinatore',
+  'Ore non retribuite coordinatore',
+  'Ore permesso approvate coordinatore',
   'Ore retribuite approvate HR',
   'Ore gettone approvate HR',
+  'Ore non retribuite HR',
+  'Ore permesso approvate HR',
   'Stato',
   'Ultima modifica',
 ] as const;
 
+/**
+ * Dettaglio delle richieste in CSV. Per i permessi le ore riconosciute vanno nelle colonne
+ * "Ore permesso…" (le colonne retribuite e gettone restano a zero); le ore non riconosciute
+ * vanno nelle colonne "Ore non retribuite…".
+ */
 export function csvRichieste(righe: readonly Richiesta[]): string {
   const num = (n?: number) => (n === undefined || n === null ? '' : decimaleIT(n));
-  const corpo = righe.map((r) =>
-    [
+  const corpo = righe.map((r) => {
+    const permesso = isPermesso(r);
+    // quattro colonne per fase: retribuite, gettone, non retribuite, permesso
+    const fase = (v: Voci) => {
+      const decisa = v.retribuite !== undefined || v.gettone !== undefined || v.nonRetribuite !== undefined;
+      if (!decisa) return ['', '', '', ''];
+      return permesso
+        ? [num(0), num(0), num(v.nonRetribuite ?? 0), num(v.retribuite ?? 0)]
+        : [num(v.retribuite ?? 0), num(v.gettone ?? 0), num(v.nonRetribuite ?? 0), num(0)];
+    };
+    return [
       campoCsv(r.numero),
+      campoCsv(r.tipologia),
       campoCsv(r.cognome),
       campoCsv(r.nome),
       campoCsv(r.login),
@@ -208,23 +312,23 @@ export function csvRichieste(righe: readonly Richiesta[]): string {
       campoCsv(r.servizio),
       campoCsv(r.centroDiCosto),
       campoCsv(r.coordinatoreNome ?? ''),
-      campoCsv(r.codiceCorso),
-      campoCsv(titoloCorso(r)),
-      campoCsv(r.ente),
-      campoCsv(r.modalita),
+      campoCsv(r.codiceCorso ?? ''),
+      campoCsv(permesso ? (r.descrizioneAttivita ?? r.tipologia) : titoloRichiesta(r)),
+      campoCsv(r.ente ?? ''),
+      campoCsv(r.modalita ?? ''),
       f.data(r.dataSessione),
       String(r.meseCompetenza),
       String(r.annoCompetenza),
+      r.oraInizioSessione,
+      r.oraFineSessione,
+      String(r.pausaPrevista ? r.pausaMinuti : 0),
       num(r.oreFrequentate),
-      num(r.oreRetribuiteRichieste),
-      num(r.oreGettoneRichieste),
-      num(r.oreRetribuiteCoord),
-      num(r.oreGettoneCoord),
-      num(r.oreRetribuiteHR),
-      num(r.oreGettoneHR),
+      ...fase(vociRichieste(r)),
+      ...fase(vociCoordinatore(r)),
+      ...fase(vociHR(r)),
       campoCsv(r.stato),
       campoCsv(f.dataOra(r.modificatoIl)),
-    ].join(';'),
-  );
-  return '﻿' + [INTESTAZIONE_CSV_RICHIESTE.join(';'), ...corpo].join('\r\n') + '\r\n';
+    ].join(';');
+  });
+  return '\ufeff' + [INTESTAZIONE_CSV_RICHIESTE.join(';'), ...corpo].join('\r\n') + '\r\n';
 }

@@ -28,7 +28,8 @@ const opzioni = {
   legalComments: 'none',
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"' },
   jsx: 'automatic',
-  loader: { '.css': 'css' },
+  // carattere e logo vengono incorporati nel file unico (nessuna richiesta verso l'esterno)
+  loader: { '.css': 'css', '.woff2': 'dataurl', '.png': 'dataurl' },
   logLevel: 'info',
 };
 

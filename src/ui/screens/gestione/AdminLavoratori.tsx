@@ -1,9 +1,9 @@
 /**
  * Amministrazione › Lavoratori: anagrafica, assegnazione alla struttura e al coordinatore,
- * segnalazioni di variazione inviate dai lavoratori.
+ * segnalazioni di variazione inviate dai lavoratori o dai loro coordinatori.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Lavoratore, StatoLavoratore, Struttura } from '../../../domain';
+import type { Lavoratore, SegnalazioneVariazione, StatoLavoratore, Struttura, UtenteDirectory } from '../../../domain';
 import {
   Avviso,
   BarraFiltri,
@@ -138,7 +138,8 @@ export function AdminLavoratori({ anagrafiche, ricarica }: PropsSezione) {
       {segnalazioni.length > 0 && (
         <Scheda titolo={`Segnalazioni da gestire (${segnalazioni.length})`} icona="avviso">
           <p className="testo-secondario" style={{ marginTop: 0 }}>
-            Variazioni di dati segnalate dai lavoratori dal proprio profilo. Aggiorna l’anagrafica, poi segna la segnalazione come gestita.
+            Variazioni dell’organigramma segnalate dai lavoratori dal proprio profilo oppure dai coordinatori per sé e per il proprio team. Aggiorna
+            l’anagrafica, poi segna la segnalazione come gestita.
           </p>
           <ul className="elenco-segnalazioni">
             {segnalazioni.map(({ lavoratore: l, segnalazione: s, indice }) => (
@@ -146,6 +147,7 @@ export function AdminLavoratori({ anagrafiche, ricarica }: PropsSezione) {
                 <div className="segnalazione-testo">
                   <strong>{nominativo(l)}</strong> <time dateTime={s.data}>{f.dataOra(s.data)}</time>
                   <div>{s.testo}</div>
+                  <AutoreSegnalazione segnalazione={s} lavoratore={l} utenti={utenti} />
                 </div>
                 <div className="riga-flessibile">
                   <Pulsante variante="secondario" piccolo icona="modifica" onClick={() => setInModifica(l)}>
@@ -465,6 +467,7 @@ function DialogoLavoratore({ lavoratore, anagrafiche, ricarica, onChiudi }: Prop
                 <div className="segnalazione-testo">
                   <time dateTime={s.data}>{f.dataOra(s.data)}</time>
                   <div>{s.testo}</div>
+                  {attuale && <AutoreSegnalazione segnalazione={s} lavoratore={attuale} utenti={utenti} />}
                 </div>
                 <Pulsante variante="successo" piccolo icona="approva" disabled={azione.inCorso} onClick={() => void gestisci(s.indice)}>
                   Segna come gestita
@@ -475,5 +478,26 @@ function DialogoLavoratore({ lavoratore, anagrafiche, ricarica, onChiudi }: Prop
         </section>
       )}
     </Dialogo>
+  );
+}
+
+/**
+ * Chi ha scritto la segnalazione: il lavoratore stesso oppure il suo coordinatore (che può
+ * segnalare variazioni dell'organigramma per sé e per il proprio team).
+ */
+function AutoreSegnalazione({ segnalazione: s, lavoratore, utenti }: { segnalazione: SegnalazioneVariazione; lavoratore: Lavoratore; utenti: readonly UtenteDirectory[] }) {
+  if (!s.autoreLogin && !s.autoreNome) return null;
+  const diAltri = !!s.autoreLogin && s.autoreLogin !== lavoratore.login;
+  const nome = s.autoreNome ?? nomeUtente(utenti, s.autoreLogin);
+  return (
+    <span className="cella-secondaria">
+      {diAltri ? (
+        <>
+          <Etichetta tono="info">Dal coordinatore</Etichetta> Segnalata da {nome}
+        </>
+      ) : (
+        'Segnalata dal lavoratore'
+      )}
+    </span>
   );
 }

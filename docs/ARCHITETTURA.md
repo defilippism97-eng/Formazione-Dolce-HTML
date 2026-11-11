@@ -30,8 +30,8 @@ La modalità si sceglie in `index.html` (`window.SDF_CONFIG.modalita = 'demo' | 
 | Ruolo | Origine | Cosa vede |
 |---|---|---|
 | Lavoratore | anagrafica Lavoratori (attivo) | solo le proprie richieste |
-| Coordinatore | assegnazione dei lavoratori (o coordinatore di servizio) | richieste dei lavoratori assegnati, esclusi bozze e se stesso |
-| Formazione HR | tabella ruoli applicativi | tutte le richieste (non le bozze), validazione, chiusura, file paghe, anomalie |
+| Coordinatore | assegnazione dei lavoratori (o coordinatore di servizio) | richieste dei lavoratori assegnati, esclusi bozze e se stesso; può segnalare a HR variazioni di organigramma per sé e per il team |
+| Formazione HR | tabella ruoli applicativi | tutte le richieste (non le bozze), validazione, monte ore dei permessi, chiusura, file paghe, anomalie |
 | Amministratore | tabella ruoli applicativi | come HR + organigramma, catalogo, utenti e ruoli, riapertura dei mesi |
 
 Un utente può avere più ruoli. Nessuno può approvare o validare le **proprie** richieste.
@@ -62,17 +62,30 @@ Definizione in codice: `src/domain/stati.ts` (insiemi `MODIFICABILI_DAL_LAVORATO
 | # | Regola | Codice |
 |---|---|---|
 | R1 | Ora di fine dopo l'ora di inizio (sessione e presenza) | `validaRichiesta` |
-| R2 | Ore frequentate = uscita − ingresso, ≥ 0, ≤ durata della sessione | `calcolaOre`, `validaRichiesta` |
-| R3 | Ore retribuite + gettone richieste ≤ ore frequentate | `validaRichiesta` |
-| R4 | Ore riconosciute (coordinatore/HR) ≤ ore frequentate, ≥ 0 | `validaDecisione` |
-| R5 | Gettone non previsto dal corso → 0 | `validaRichiesta`, backend |
+| R2 | Ore frequentate = uscita − ingresso − pausa, > 0, ≤ durata della sessione | `calcolaOre`, `validaRichiesta` |
+| R3 | Ore retribuite + gettone + non retribuite = ore frequentate all'invio (in bozza ≤) | `validaRichiesta` |
+| R4 | Ore riconosciute da coordinatore e HR: stesse tre voci, somma = ore frequentate; nota obbligatoria per respingere o chiedere un'integrazione | `validaDecisione` |
+| R5 | Gettone solo per i corsi che lo prevedono, mai per i permessi | `validaRichiesta`, `validaDecisione`, backend |
 | R6 | Somma delle sessioni dello stesso corso ≤ durata complessiva (anomalia se diversa a fine corso) | `validaRichiesta`, `rilevaAnomalie` |
 | R7 | Duplicato: stesso lavoratore, corso e data → conferma esplicita, segnalazione a coordinatore e HR | `trovaDuplicati`, backend |
 | R8 | Nessuna modifica dopo la validazione HR | `azioniConsentite` |
 | R9 | Nessuna modifica né nuova richiesta in un mese chiuso | `validaRichiesta`, `azioniConsentite` |
 | R10 | Registro di tutte le variazioni di coordinatore, HR e amministratore | backend (`registra`) |
 | R11 | Campi obbligatori, dichiarazioni, coordinatore e profilo completo per l'invio | `validaRichiesta` |
-| R12 | Mese e anno di competenza = data della sessione | backend |
+| R12 | Data non futura; mese e anno di competenza = data della sessione | `validaRichiesta`, backend |
+| R13 | Pausa: se prevista dura da 5 a 240 minuti ed è più breve della sessione; si toglie dalla durata della sessione e dalle ore frequentate (se la presenza è parziale, solo quando il lavoratore dichiara che la pausa è caduta durante la presenza) | `calcolaOre`, `validaRichiesta` |
+| R14 | Permessi (diritto allo studio, riqualifica professionale): solo con un monte ore attivo assegnato da HR e valido alla data; le ore non superano il residuo, all'invio e in ogni decisione | `validaRichiesta`, `validaDecisione`, `consumoMonteOre`, backend |
+
+## Tipologie e monte ore dei permessi
+
+Una richiesta ha una **tipologia**: `Formazione`, `Diritto allo studio` o `Riqualifica professionale`. Le ultime due sono permessi che HR abilita per il singolo lavoratore assegnandogli un **monte ore** (`MonteOre`: lavoratore, tipo, ore totali, periodo di validità, attivo).
+
+- Il lavoratore vede un tipo di permesso solo finché ha un monte ore attivo di quel tipo.
+- I permessi seguono lo stesso ciclo di vita della formazione (coordinatore, poi HR) e usano gli stessi campi delle ore: `oreRetribuite*` = ore di permesso a carico del monte ore, `oreGettone*` = 0, `oreNonRetribuite*` = ore non riconosciute.
+- `consumoMonteOre` (`src/domain/monteore.ts`): **usufruite** = permessi validati da HR; **impegnate** = permessi inviati e non conclusi; **residue** = totali − usufruite − impegnate. Bozze, richieste respinte e annullate non contano.
+- Nel file paghe i permessi hanno colonne proprie.
+
+Per la formazione l'**ente erogatore** non è scelto dal lavoratore: un corso del catalogo è del datore di lavoro, un corso non a catalogo è esterno (committente o altro soggetto). Coordinatore e HR possono correggere titolo e dati di un corso esterno prima di decidere (`correggiCorso`). L'attestato non è previsto per i corsi del datore di lavoro ed è facoltativo per quelli esterni.
 
 ## Sicurezza
 

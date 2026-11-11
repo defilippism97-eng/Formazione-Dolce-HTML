@@ -8,6 +8,7 @@ import type {
   Corso,
   DataISO,
   Lavoratore,
+  MonteOre,
   Notifica,
   Richiesta,
   Struttura,
@@ -15,7 +16,7 @@ import type {
   VoceRegistro,
 } from '../../domain';
 
-export const VERSIONE_DATI = 1;
+export const VERSIONE_DATI = 2;
 
 export interface ConfigurazioneDemo {
   emailHR: string;
@@ -33,6 +34,8 @@ export interface DatiDemo {
   strutture: Struttura[];
   lavoratori: Lavoratore[];
   corsi: Corso[];
+  /** Monte ore dei permessi (diritto allo studio, riqualifica professionale) assegnati da HR. */
+  montiOre: MonteOre[];
   richieste: Richiesta[];
   chiusure: ChiusuraMensile[];
   registro: VoceRegistro[];

@@ -13,6 +13,7 @@ import {
   azioniConsentite,
   calcolaKPI,
   calcolaOre,
+  consumoMonteOre,
   dataRomaDaIstante,
   filtraRichieste,
   generaCsvPaghe,
@@ -25,14 +26,20 @@ import {
   mascheraCodiceFiscale,
   mesePrecedente,
   MODIFICABILI_DAL_LAVORATORE,
+  monteOrePerData,
   nomeFilePaghe,
+  periodiSovrapposti,
   periodo as periodoDi,
   periodoDiData,
   puoVedereRichiesta,
   righePaghe,
   rilevaAnomalie,
   ruoloRegistro,
+  TIPI_PERMESSO,
+  titoloRichiesta,
+  totaliPaghe,
   trovaDuplicati,
+  validaCorrezioneCorso,
   validaDecisione,
   validaRichiesta,
   valutaPromemoria,
@@ -40,28 +47,35 @@ import {
 import type {
   AssegnazioneRuolo,
   ChiusuraMensile,
+  CorrezioneCorsoInput,
   Corso,
   FilePaghe,
   FiltriRichieste,
   Lavoratore,
+  MonteOre,
   Notifica,
   Richiesta,
+  RipartizioneOre,
   RuoloRegistro,
   Sessione,
+  SituazioneMonteOre,
   StatoRichiesta,
   Struttura,
+  TipoPermesso,
   VoceRegistro,
 } from '../../domain';
 import {
   ErroreApi,
   type AmbitoRichieste,
   type Anagrafiche,
+  type ApertePerCoordinatore,
   type Backend,
   type Credenziali,
   type DecisioneInput,
   type DecisioneMultiplaInput,
   type DettaglioRichiesta,
   type LavoratoreTeam,
+  type MonteOreInput,
   type Profilo,
   type RisultatoMultiplo,
   type SalvaRichiestaInput,
@@ -87,6 +101,8 @@ export interface OpzioniBackendDemo {
 }
 
 const NON_TROVATA = 'Richiesta non trovata o non autorizzata.';
+/** Stati dopo la validazione HR: i dati della richiesta non si toccano più. */
+const DEFINITIVI_HR: ReadonlySet<StatoRichiesta> = new Set<StatoRichiesta>(['Validata da HR', 'Inclusa nel riepilogo mensile', 'Inviata a Payroll']);
 
 export class BackendDemo implements Backend {
   readonly modalita = 'demo' as const;
@@ -285,7 +301,14 @@ export class BackendDemo implements Backend {
       coordinatoreEmail: this.emailUtente(l?.coordinatoreLogin),
       stato: l?.stato,
       segnalazioni: this.copia(l?.segnalazioni ?? []),
+      monteOre: l ? this.dati.montiOre.filter((m) => m.lavoratoreId === l.id && m.attivo).map((m) => this.situazione(m)) : [],
     };
+  }
+
+  /** Monte ore con i consumi calcolati dalle richieste. */
+  private situazione(m: MonteOre): SituazioneMonteOre {
+    const l = this.dati.lavoratori.find((x) => x.id === m.lavoratoreId);
+    return { ...this.copia(m), nominativo: l ? `${l.cognome} ${l.nome}` : '', ...consumoMonteOre(m, this.dati.richieste) };
   }
 
   async getProfilo(): Promise<Profilo> {
@@ -317,16 +340,27 @@ export class BackendDemo implements Backend {
     return this.profiloDi(this.richiediSessione());
   }
 
-  async segnalaVariazione(testo: string): Promise<Profilo> {
+  async segnalaVariazione(testo: string, lavoratoreId?: string): Promise<Profilo> {
     await this.attesa();
     const s = this.richiediSessione();
-    const l = this.lavoratoreDi(s);
+    // senza lavoratoreId: per se stessi; con lavoratoreId: il coordinatore per un lavoratore del proprio team
+    let l: Lavoratore;
+    let ruolo: RuoloRegistro = 'Lavoratore';
+    if (lavoratoreId && lavoratoreId !== s.lavoratoreId) {
+      const trovato = this.dati.lavoratori.find((x) => x.id === lavoratoreId && x.coordinatoreLogin === s.login);
+      if (!trovato) throw new ErroreApi('NON_AUTORIZZATO', 'Puoi segnalare variazioni solo per te e per i lavoratori del tuo team.');
+      l = trovato;
+      ruolo = 'Coordinatore';
+    } else {
+      l = this.lavoratoreDi(s);
+    }
     const t = testo.trim();
     if (t.length < 10) throw new ErroreApi('VALIDAZIONE', 'Descrivi la variazione (almeno 10 caratteri).', [{ campo: 'segnalazione', messaggio: 'Testo troppo breve.' }]);
     if (t.length > MAX_LUNGHEZZA_NOTE) throw new ErroreApi('VALIDAZIONE', 'Testo troppo lungo.');
-    l.segnalazioni.unshift({ testo: t, data: this.ora(), aperta: true });
-    this.registra({ autore: s.login, ruolo: 'Lavoratore', azione: 'Segnalazione variazione dati', entita: 'Lavoratore', entitaId: l.id, nota: t });
-    this.notifica([this.dati.config.emailHR], messaggi.segnalazioneVariazione(`${l.cognome} ${l.nome}`, t));
+    const autoreNome = this.nomeUtente(s.login) ?? s.login;
+    l.segnalazioni.unshift({ testo: t, data: this.ora(), aperta: true, autoreLogin: s.login, autoreNome });
+    this.registra({ autore: s.login, ruolo, azione: 'Segnalazione variazione dati', entita: 'Lavoratore', entitaId: l.id, nota: t });
+    this.notifica([this.dati.config.emailHR], messaggi.segnalazioneVariazione(`${l.cognome} ${l.nome}`, t, ruolo === 'Coordinatore' ? autoreNome : undefined));
     this.salva();
     return this.profiloDi(s);
   }
@@ -387,15 +421,25 @@ export class BackendDemo implements Backend {
       if (this.meseChiuso(esistente.annoCompetenza, esistente.meseCompetenza)) throw new ErroreApi('CONFLITTO', 'Il mese della richiesta è chiuso: non è più modificabile.');
     }
 
-    // --- corso
+    const permesso = input.tipologia !== 'Formazione';
+    if (esistente && esistente.tipologia !== input.tipologia) {
+      throw new ErroreApi('VALIDAZIONE', 'La tipologia di una richiesta già salvata non può essere cambiata: annullala e creane una nuova.');
+    }
+
+    // --- corso (formazione) oppure monte ore (permessi)
     let corso: Corso | null = null;
-    if (input.corsoId) {
+    if (!permesso && input.corsoId) {
       corso = this.dati.corsi.find((c) => c.id === input.corsoId) ?? null;
       if (!corso) throw new ErroreApi('VALIDAZIONE', 'Corso non trovato.', [{ campo: 'corsoId', messaggio: 'Corso non trovato.' }]);
     }
+    const monteOre = permesso ? monteOrePerData(this.dati.montiOre, l.id, input.tipologia as TipoPermesso, input.dataSessione) : undefined;
+    // l'ente si deduce dal corso: a catalogo = Datore di lavoro, altrimenti Committente o altro soggetto
+    const dati: SalvaRichiestaInput = permesso
+      ? { ...input, oraIngresso: input.oraInizioSessione, oraUscita: input.oraFineSessione, pausaInPresenza: true }
+      : { ...input, ente: corso ? corso.ente : (input.ente ?? (input.nuovoCorso ? 'Committente o altro soggetto' : undefined)) };
     const altre = this.dati.richieste.filter((r) => r.login === s.login && r.id !== input.id);
     const errori = validaRichiesta(
-      input,
+      dati,
       {
         login: s.login,
         corso,
@@ -404,20 +448,29 @@ export class BackendDemo implements Backend {
         coordinatoreLogin: l.coordinatoreLogin,
         profiloCompleto: !!l.emailContatto && !!l.codiceFiscale,
         oggi: this.oggi(),
+        monteOre: permesso
+          ? monteOre
+            ? { oreResidue: consumoMonteOre(monteOre, this.dati.richieste, input.id).oreResidue, validoDal: monteOre.validoDal, validoAl: monteOre.validoAl }
+            : null
+          : undefined,
       },
       azione === 'invia',
     );
-    // --- allegati
+    // --- allegati: l'attestato si allega solo per i corsi esterni (per quelli del datore di lavoro è già a sistema)
+    const esternoPrevisto = !permesso && dati.ente === 'Committente o altro soggetto';
     const allegatiRestanti = (esistente?.allegati ?? []).filter((a) => !input.allegatiRimossi.includes(a.id));
     if (allegatiRestanti.length + input.allegatiNuovi.length > MAX_ALLEGATI) errori.push({ campo: 'allegati', messaggio: `Puoi allegare al massimo ${MAX_ALLEGATI} file.` });
     for (const f of input.allegatiNuovi) {
       if (f.contenuto.size > MAX_DIMENSIONE_ALLEGATO) errori.push({ campo: 'allegati', messaggio: `"${f.nome}" supera 10 MB.` });
       if (!TIPI_ALLEGATO_AMMESSI.includes(f.mime)) errori.push({ campo: 'allegati', messaggio: `"${f.nome}": sono ammessi solo PDF e immagini (JPG, PNG, HEIC).` });
+      if (f.tipo === 'Attestato' && !esternoPrevisto) {
+        errori.push({ campo: 'allegati', messaggio: 'L’attestato si allega solo per i corsi di altri enti: per i corsi di Società Dolce è già disponibile a sistema.' });
+      }
     }
     if (errori.length) throw new ErroreApi('VALIDAZIONE', 'Alcuni dati non sono corretti: controlla i campi evidenziati.', errori);
 
     // --- corso esterno nuovo
-    if (!corso && input.ente === 'Committente o altro soggetto' && input.nuovoCorso) {
+    if (!permesso && !corso && dati.ente === 'Committente o altro soggetto' && input.nuovoCorso) {
       this.dati.contatori.corsiEsterni += 1;
       const nc = input.nuovoCorso;
       corso = {
@@ -438,14 +491,18 @@ export class BackendDemo implements Backend {
       this.dati.corsi.push(corso);
       this.registra({ autore: s.login, ruolo: 'Lavoratore', azione: 'Inserimento corso esterno', entita: 'Corso', entitaId: corso.id, nota: `${corso.codice} – ${corso.titolo}` });
     }
-    if (!corso) throw new ErroreApi('VALIDAZIONE', 'Indica il corso.', [{ campo: 'corsoId', messaggio: 'Indica il corso.' }]);
+    if (!permesso && !corso) throw new ErroreApi('VALIDAZIONE', 'Indica il corso.', [{ campo: 'corsoId', messaggio: 'Indica il corso.' }]);
 
     // --- dati della richiesta (quelli organizzativi arrivano dal server, mai dal browser)
-    const { durataSessione, oreFrequentate } = calcolaOre(input);
+    const { durataSessione, oreFrequentate } = calcolaOre(dati);
     const { anno, mese } = periodoDiData(input.dataSessione);
     const ora = this.ora();
-    const esterno = corso.ente === 'Committente o altro soggetto';
+    const esterno = corso?.ente === 'Committente o altro soggetto';
+    const frequentate = oreFrequentate ?? 0;
     const valori: Omit<Richiesta, 'id' | 'numero' | 'stato' | 'creatoIl' | 'allegati' | 'possibileDuplicato' | 'giorniAttesa' | 'promemoriaInviati' | 'segnalataHR'> = {
+      tipologia: input.tipologia,
+      monteOreId: monteOre?.id,
+      descrizioneAttivita: permesso ? input.descrizioneAttivita?.trim() : undefined,
       lavoratoreId: l.id,
       login: l.login,
       cognome: l.cognome,
@@ -458,23 +515,28 @@ export class BackendDemo implements Backend {
       strutturaId: struttura.id,
       coordinatoreLogin: l.coordinatoreLogin,
       coordinatoreNome: this.nomeUtente(l.coordinatoreLogin),
-      corsoId: corso.id,
-      codiceCorso: corso.codice,
-      titoloCorso: esterno ? '' : corso.titolo,
-      titoloCorsoLibero: esterno ? corso.titolo : undefined,
-      durataCorso: corso.durataOre,
-      ente: corso.ente,
-      modalita: corso.modalita,
-      piuGiornate: corso.piuGiornate,
+      corsoId: corso?.id,
+      codiceCorso: corso?.codice ?? '',
+      titoloCorso: corso && !esterno ? corso.titolo : '',
+      titoloCorsoLibero: corso && esterno ? corso.titolo : undefined,
+      durataCorso: corso?.durataOre ?? 0,
+      ente: corso?.ente,
+      modalita: corso?.modalita,
+      piuGiornate: corso?.piuGiornate ?? false,
       dataSessione: input.dataSessione,
-      oraInizioSessione: input.oraInizioSessione,
-      oraFineSessione: input.oraFineSessione,
+      oraInizioSessione: dati.oraInizioSessione,
+      oraFineSessione: dati.oraFineSessione,
+      pausaPrevista: !!dati.pausaPrevista,
+      pausaMinuti: dati.pausaPrevista ? dati.pausaMinuti : 0,
+      pausaInPresenza: dati.pausaPrevista ? calcolaOre(dati).pausaApplicata > 0 : false,
       durataSessione: durataSessione ?? 0,
-      oraIngresso: input.oraIngresso,
-      oraUscita: input.oraUscita,
-      oreFrequentate: oreFrequentate ?? 0,
-      oreRetribuiteRichieste: arrotonda2(input.oreRetribuiteRichieste),
-      oreGettoneRichieste: corso.gettonePrevisto ? arrotonda2(input.oreGettoneRichieste) : 0,
+      oraIngresso: dati.oraIngresso,
+      oraUscita: dati.oraUscita,
+      oreFrequentate: frequentate,
+      // permessi: tutte le ore sono ore di permesso a carico del monte ore
+      oreRetribuiteRichieste: permesso ? frequentate : arrotonda2(input.oreRetribuiteRichieste),
+      oreGettoneRichieste: permesso || !corso?.gettonePrevisto ? 0 : arrotonda2(input.oreGettoneRichieste),
+      oreNonRetribuiteRichieste: permesso ? 0 : arrotonda2(input.oreNonRetribuiteRichieste),
       noteLavoratore: input.noteLavoratore?.trim() || undefined,
       modificatoIl: ora,
       modificatoDa: s.login,
@@ -485,7 +547,7 @@ export class BackendDemo implements Backend {
 
     // --- duplicati (R7): conferma esplicita prima dell'invio
     let duplicati: Richiesta[] = [];
-    if (azione === 'invia') {
+    if (azione === 'invia' && corso) {
       duplicati = trovaDuplicati({ login: l.login, codiceCorso: corso.codice, dataSessione: input.dataSessione, id: input.id }, this.dati.richieste);
       if (duplicati.length && !input.confermaDuplicato) {
         throw new ErroreApi(
@@ -592,7 +654,10 @@ export class BackendDemo implements Backend {
     // lo storico completo è riservato a HR; gli altri vedono solo i cambi di stato
     const storico = isUfficioHR(s) ? voci : voci.filter((v) => v.campo === 'Stato').map((v) => ({ ...v, autore: v.ruolo, nota: undefined }));
     const duplicati = trovaDuplicati(r, this.dati.richieste).filter((d) => puoVedereRichiesta(s, d)).map((d) => d.numero);
-    return this.copia({ richiesta: r, azioni: azioniConsentite(s, r, meseChiuso), meseChiuso, storico, duplicati });
+    const m = r.monteOreId ? this.dati.montiOre.find((x) => x.id === r.monteOreId) : undefined;
+    const monteOre = m ? { ...this.situazione(m), oreResidueSenzaQuesta: consumoMonteOre(m, this.dati.richieste, r.id).oreResidue } : undefined;
+    const gettonePrevisto = r.tipologia === 'Formazione' && (this.dati.corsi.find((c) => c.id === r.corsoId)?.gettonePrevisto ?? true);
+    return this.copia({ richiesta: r, azioni: azioniConsentite(s, r, meseChiuso), meseChiuso, storico, duplicati, monteOre, gettonePrevisto });
   }
 
   async scaricaAllegato(richiestaId: string, allegatoId: string): Promise<{ nome: string; mime: string; contenuto: Blob }> {
@@ -601,7 +666,7 @@ export class BackendDemo implements Backend {
     const r = this.trovaRichiesta(s, richiestaId);
     const a = r.allegati.find((x) => x.id === allegatoId);
     if (!a) throw new ErroreApi('NON_TROVATO', 'Allegato non trovato.');
-    const blob = (await this.opz.archivio.leggi(a.id)) ?? pdfAttestatoSimulato(r.titoloCorsoLibero || r.titoloCorso, `${r.cognome} ${r.nome}`);
+    const blob = (await this.opz.archivio.leggi(a.id)) ?? pdfAttestatoSimulato(titoloRichiesta(r), `${r.cognome} ${r.nome}`);
     return { nome: a.nome, mime: a.mime, contenuto: blob };
   }
 
@@ -630,9 +695,27 @@ export class BackendDemo implements Backend {
       .filter((l) => l.coordinatoreLogin === s.login && l.login !== s.login)
       .map((l) => {
         const st = this.dati.strutture.find((x) => x.id === l.strutturaId);
-        return { id: l.id, login: l.login, nominativo: `${l.cognome} ${l.nome}`, servizio: st?.servizio ?? '', centroDiCosto: st?.centroDiCosto ?? '', stato: l.stato };
+        return {
+          id: l.id,
+          login: l.login,
+          nominativo: `${l.cognome} ${l.nome}`,
+          area: st?.area ?? '',
+          servizio: st?.servizio ?? '',
+          centroDiCosto: st?.centroDiCosto ?? '',
+          stato: l.stato,
+          segnalazioniAperte: l.segnalazioni.filter((x) => x.aperta).length,
+        };
       })
       .sort((a, b) => a.nominativo.localeCompare(b.nominativo, 'it'));
+  }
+
+  /** Opzioni per i controlli sulla decisione: gettone previsto dal corso e, per i permessi, monte ore residuo. */
+  private opzioniDecisione(r: Richiesta) {
+    const m = r.monteOreId ? this.dati.montiOre.find((x) => x.id === r.monteOreId) : undefined;
+    return {
+      gettonePrevisto: r.tipologia === 'Formazione' ? (this.dati.corsi.find((c) => c.id === r.corsoId)?.gettonePrevisto ?? true) : false,
+      oreResidueMonteOre: r.tipologia !== 'Formazione' ? (m ? consumoMonteOre(m, this.dati.richieste, r.id).oreResidue : 0) : undefined,
+    };
   }
 
   async decisioneCoordinatore(id: string, input: DecisioneInput): Promise<Richiesta> {
@@ -643,14 +726,17 @@ export class BackendDemo implements Backend {
     if (!azioni.esitoCoordinatore) {
       throw new ErroreApi(r.coordinatoreLogin === s.login ? 'CONFLITTO' : 'NON_AUTORIZZATO', `Non puoi decidere su questa richiesta (stato: ${r.stato}).`);
     }
-    const errori = validaDecisione(input.esito, input.oreRetribuite, input.oreGettone, r.oreFrequentate, input.nota);
+    const ore: RipartizioneOre = { retribuite: input.oreRetribuite, gettone: input.oreGettone, nonRetribuite: input.oreNonRetribuite };
+    const errori = validaDecisione(input.esito, ore, r.oreFrequentate, input.nota, this.opzioniDecisione(r));
     if (errori.length) throw new ErroreApi('VALIDAZIONE', errori[0]!.messaggio, errori);
     const nota = input.nota?.trim() || undefined;
     if (input.esito === 'approva') {
-      this.registraOre(r, s.login, 'Coordinatore', 'Ore retribuite riconosciute coordinatore', r.oreRetribuiteRichieste, input.oreRetribuite);
-      this.registraOre(r, s.login, 'Coordinatore', 'Ore gettone riconosciute coordinatore', r.oreGettoneRichieste, input.oreGettone);
-      r.oreRetribuiteCoord = arrotonda2(input.oreRetribuite);
-      r.oreGettoneCoord = arrotonda2(input.oreGettone);
+      this.registraOre(r, s.login, 'Coordinatore', 'Ore retribuite riconosciute coordinatore', r.oreRetribuiteRichieste, ore.retribuite);
+      this.registraOre(r, s.login, 'Coordinatore', 'Ore gettone riconosciute coordinatore', r.oreGettoneRichieste, ore.gettone);
+      this.registraOre(r, s.login, 'Coordinatore', 'Ore non retribuite riconosciute coordinatore', r.oreNonRetribuiteRichieste, ore.nonRetribuite);
+      r.oreRetribuiteCoord = arrotonda2(ore.retribuite);
+      r.oreGettoneCoord = arrotonda2(ore.gettone);
+      r.oreNonRetribuiteCoord = arrotonda2(ore.nonRetribuite);
       r.noteCoordinatore = nota;
       r.approvatoCoordIl = this.ora();
       this.cambiaStato(r, 'Approvata dal coordinatore', s.login, 'Coordinatore', nota);
@@ -675,7 +761,7 @@ export class BackendDemo implements Backend {
     const s = this.richiediSessione();
     this.richiediRuolo(s, 'hr', 'admin');
     if (input.esito !== 'approva') {
-      const err = validaDecisione(input.esito, 0, 0, 0, input.nota);
+      const err = validaDecisione(input.esito, { retribuite: 0, gettone: 0, nonRetribuite: 0 }, 0, input.nota);
       if (err.length) throw new ErroreApi('VALIDAZIONE', err[0]!.messaggio, err);
     }
     const ruolo = ruoloRegistro(s, 'hr');
@@ -693,18 +779,27 @@ export class BackendDemo implements Backend {
         esito.scartate.push({ id: r.id, numero: r.numero, motivo });
         continue;
       }
-      const oreRet = v.oreRetribuite ?? r.oreRetribuiteCoord ?? r.oreRetribuiteRichieste;
-      const oreGet = v.oreGettone ?? r.oreGettoneCoord ?? r.oreGettoneRichieste;
-      const errori = validaDecisione(input.esito, oreRet, oreGet, r.oreFrequentate, nota);
+      // ore non indicate = quelle riconosciute dal coordinatore
+      const indicate = v.oreRetribuite !== undefined || v.oreGettone !== undefined || v.oreNonRetribuite !== undefined;
+      const ore: RipartizioneOre = indicate
+        ? { retribuite: v.oreRetribuite ?? 0, gettone: v.oreGettone ?? 0, nonRetribuite: v.oreNonRetribuite ?? 0 }
+        : {
+            retribuite: r.oreRetribuiteCoord ?? r.oreRetribuiteRichieste,
+            gettone: r.oreGettoneCoord ?? r.oreGettoneRichieste,
+            nonRetribuite: r.oreNonRetribuiteCoord ?? r.oreNonRetribuiteRichieste,
+          };
+      const errori = validaDecisione(input.esito, ore, r.oreFrequentate, nota, this.opzioniDecisione(r));
       if (errori.length) {
         esito.scartate.push({ id: r.id, numero: r.numero, motivo: errori[0]!.messaggio });
         continue;
       }
       if (input.esito === 'approva') {
-        this.registraOre(r, s.login, ruolo, 'Ore retribuite approvate HR', r.oreRetribuiteCoord, oreRet);
-        this.registraOre(r, s.login, ruolo, 'Ore gettone approvate HR', r.oreGettoneCoord, oreGet);
-        r.oreRetribuiteHR = arrotonda2(oreRet);
-        r.oreGettoneHR = arrotonda2(oreGet);
+        this.registraOre(r, s.login, ruolo, 'Ore retribuite approvate HR', r.oreRetribuiteCoord, ore.retribuite);
+        this.registraOre(r, s.login, ruolo, 'Ore gettone approvate HR', r.oreGettoneCoord, ore.gettone);
+        this.registraOre(r, s.login, ruolo, 'Ore non retribuite approvate HR', r.oreNonRetribuiteCoord, ore.nonRetribuite);
+        r.oreRetribuiteHR = arrotonda2(ore.retribuite);
+        r.oreGettoneHR = arrotonda2(ore.gettone);
+        r.oreNonRetribuiteHR = arrotonda2(ore.nonRetribuite);
         r.validatoHRIl = this.ora();
         r.noteHR = nota;
         this.cambiaStato(r, 'Validata da HR', s.login, ruolo, nota);
@@ -721,13 +816,120 @@ export class BackendDemo implements Backend {
     return esito;
   }
 
+  async correggiCorso(richiestaId: string, dati: CorrezioneCorsoInput): Promise<Richiesta> {
+    await this.attesa();
+    const s = this.richiediSessione();
+    const r = this.trovaRichiesta(s, richiestaId);
+    const azioni = azioniConsentite(s, r, this.meseChiuso(r.annoCompetenza, r.meseCompetenza));
+    if (!azioni.correzioneCorso) throw new ErroreApi('NON_AUTORIZZATO', 'Non puoi correggere i dati del corso di questa richiesta.');
+    const corso = this.dati.corsi.find((c) => c.id === r.corsoId);
+    if (!corso || corso.ente !== 'Committente o altro soggetto') throw new ErroreApi('CONFLITTO', 'Si possono correggere solo i corsi di altri enti inseriti dal lavoratore.');
+    // sessioni dello stesso corso già dichiarate dal lavoratore: la durata non può scendere sotto
+    const collegate = this.dati.richieste.filter((x) => x.corsoId === corso.id && x.stato !== 'Annullata' && !x.stato.startsWith('Respinta'));
+    const oreDichiarate = arrotonda2(collegate.filter((x) => x.stato !== 'Bozza').reduce((t, x) => t + x.durataSessione, 0));
+    const errori = validaCorrezioneCorso(dati, oreDichiarate);
+    if (errori.length) throw new ErroreApi('VALIDAZIONE', errori[0]!.messaggio, errori);
+    const ruolo: RuoloRegistro = azioni.esitoCoordinatore ? 'Coordinatore' : ruoloRegistro(s, 'hr');
+    const nuovi = { titolo: dati.titolo.trim(), nomeEnte: dati.nomeEnte?.trim() || undefined, modalita: dati.modalita, durataOre: dati.durataOre, piuGiornate: dati.piuGiornate };
+    const etichette: Record<keyof typeof nuovi, string> = { titolo: 'Titolo corso', nomeEnte: 'Ente organizzatore', modalita: 'Modalità di svolgimento', durataOre: 'Durata complessiva corso', piuGiornate: 'Più giornate formative' };
+    let modificato = false;
+    for (const k of Object.keys(nuovi) as (keyof typeof nuovi)[]) {
+      if (corso[k] !== nuovi[k]) {
+        modificato = true;
+        this.registra({ autore: s.login, ruolo, azione: 'Correzione dati del corso', entita: 'Richiesta', entitaId: r.id, richiestaId: r.id, campo: etichette[k], prima: String(corso[k] ?? ''), dopo: String(nuovi[k] ?? '') });
+      }
+    }
+    if (modificato) {
+      Object.assign(corso, nuovi);
+      // la correzione vale per tutte le sessioni dello stesso corso non ancora validate da HR
+      for (const x of collegate) {
+        if (DEFINITIVI_HR.has(x.stato)) continue;
+        x.titoloCorsoLibero = corso.titolo;
+        x.modalita = corso.modalita;
+        x.durataCorso = corso.durataOre;
+        x.piuGiornate = corso.piuGiornate;
+      }
+      r.modificatoIl = this.ora();
+      r.modificatoDa = s.login;
+      this.salva();
+    }
+    return this.copia(r);
+  }
+
+  // =========================================================================
+  //  Monte ore dei permessi (diritto allo studio, riqualifica professionale)
+  // =========================================================================
+  async getMontiOre(): Promise<SituazioneMonteOre[]> {
+    await this.attesa();
+    const s = this.richiediSessione();
+    this.richiediRuolo(s, 'hr', 'admin');
+    return this.dati.montiOre
+      .map((m) => this.situazione(m))
+      .sort((a, b) => a.nominativo.localeCompare(b.nominativo, 'it') || a.tipo.localeCompare(b.tipo) || b.validoDal.localeCompare(a.validoDal));
+  }
+
+  async salvaMonteOre(dati: MonteOreInput): Promise<SituazioneMonteOre> {
+    await this.attesa();
+    const s = this.richiediSessione();
+    this.richiediRuolo(s, 'hr', 'admin');
+    const esistente = dati.id ? this.dati.montiOre.find((m) => m.id === dati.id) : undefined;
+    if (dati.id && !esistente) throw new ErroreApi('NON_TROVATO', 'Monte ore non trovato.');
+    const errori = [];
+    const l = this.dati.lavoratori.find((x) => x.id === dati.lavoratoreId);
+    if (!l) errori.push({ campo: 'lavoratoreId', messaggio: 'Seleziona il lavoratore.' });
+    if (!TIPI_PERMESSO.includes(dati.tipo)) errori.push({ campo: 'tipo', messaggio: 'Indica il tipo di permesso.' });
+    if (!(dati.oreTotali > 0) || dati.oreTotali > 2000) errori.push({ campo: 'oreTotali', messaggio: 'Indica il monte ore assegnato (maggiore di zero).' });
+    if (!dati.validoDal || !dati.validoAl || dati.validoAl < dati.validoDal) errori.push({ campo: 'validoAl', messaggio: 'Indica un periodo di validità corretto.' });
+    if (esistente && (esistente.lavoratoreId !== dati.lavoratoreId || esistente.tipo !== dati.tipo)) {
+      errori.push({ campo: 'tipo', messaggio: 'Lavoratore e tipo di permesso non si possono cambiare: disattiva questo monte ore e creane uno nuovo.' });
+    }
+    if (dati.attivo && this.dati.montiOre.some((m) => m.id !== dati.id && m.attivo && m.lavoratoreId === dati.lavoratoreId && m.tipo === dati.tipo && periodiSovrapposti(m, dati))) {
+      errori.push({ campo: 'validoDal', messaggio: 'Per questo lavoratore esiste già un monte ore attivo dello stesso tipo in un periodo che si sovrappone.' });
+    }
+    if (esistente) {
+      const consumo = consumoMonteOre(esistente, this.dati.richieste);
+      const usate = arrotonda2(consumo.oreUsufruite + consumo.oreImpegnate);
+      if (dati.oreTotali < usate) errori.push({ campo: 'oreTotali', messaggio: `Il monte ore non può essere inferiore alle ore già usufruite o richieste (${usate}).` });
+      const fuori = this.dati.richieste.some((r) => r.monteOreId === esistente.id && r.stato !== 'Annullata' && !r.stato.startsWith('Respinta') && (r.dataSessione < dati.validoDal || r.dataSessione > dati.validoAl));
+      if (fuori) errori.push({ campo: 'validoDal', messaggio: 'Ci sono permessi già richiesti fuori dal nuovo periodo di validità.' });
+    }
+    if (errori.length) throw new ErroreApi('VALIDAZIONE', errori[0]!.messaggio, errori);
+    const ruolo = ruoloRegistro(s, haRuolo(s, 'hr') ? 'hr' : 'admin');
+    const nuovo: MonteOre = {
+      id: esistente?.id ?? this.nuovoId('mo'),
+      lavoratoreId: dati.lavoratoreId,
+      tipo: dati.tipo,
+      oreTotali: arrotonda2(dati.oreTotali),
+      validoDal: dati.validoDal,
+      validoAl: dati.validoAl,
+      attivo: dati.attivo,
+      note: dati.note?.trim() || undefined,
+      assegnatoDa: esistente?.assegnatoDa ?? s.login,
+      assegnatoIl: esistente?.assegnatoIl ?? this.ora(),
+    };
+    if (esistente) {
+      for (const k of ['oreTotali', 'validoDal', 'validoAl', 'attivo', 'note'] as const) {
+        if (esistente[k] !== nuovo[k]) {
+          this.registra({ autore: s.login, ruolo, azione: 'Modifica monte ore', entita: 'Monte ore', entitaId: nuovo.id, campo: k, prima: String(esistente[k] ?? ''), dopo: String(nuovo[k] ?? ''), nota: `${l!.cognome} ${l!.nome} – ${nuovo.tipo}` });
+        }
+      }
+      Object.assign(esistente, nuovo);
+    } else {
+      this.dati.montiOre.push(nuovo);
+      this.registra({ autore: s.login, ruolo, azione: 'Assegnazione monte ore', entita: 'Monte ore', entitaId: nuovo.id, nota: `${l!.cognome} ${l!.nome} – ${nuovo.tipo}: ${nuovo.oreTotali} ore dal ${nuovo.validoDal} al ${nuovo.validoAl}` });
+      this.notifica([l!.emailContatto], messaggi.monteOreAssegnato(l!.nome, nuovo));
+    }
+    this.salva();
+    return this.situazione(esistente ?? nuovo);
+  }
+
   // =========================================================================
   //  Chiusura mensile e paghe
   // =========================================================================
   private chiusuraDi(anno: number, mese: number): ChiusuraMensile {
     let c = this.dati.chiusure.find((x) => x.anno === anno && x.mese === mese);
     if (!c) {
-      c = { periodo: periodoDi(anno, mese), anno, mese, stato: 'Aperto', numeroRichieste: 0, totaleOreRiconosciute: 0, totaleGettoni: 0, filePaghe: [], riaperture: [] };
+      c = { periodo: periodoDi(anno, mese), anno, mese, stato: 'Aperto', numeroRichieste: 0, totaleOreRiconosciute: 0, totaleGettoni: 0, totaleOreNonRetribuite: 0, totaleOrePermessi: 0, filePaghe: [], riaperture: [] };
       this.dati.chiusure.push(c);
       this.dati.chiusure.sort((a, b) => a.periodo.localeCompare(b.periodo));
     }
@@ -736,9 +938,12 @@ export class BackendDemo implements Backend {
 
   private aggiornaTotali(c: ChiusuraMensile): void {
     const incluse = this.dati.richieste.filter((r) => r.periodoChiusura === c.periodo && (r.stato === 'Inclusa nel riepilogo mensile' || r.stato === 'Inviata a Payroll'));
+    const totali = totaliPaghe(righePaghe(incluse, this.dati.lavoratori));
     c.numeroRichieste = incluse.length;
-    c.totaleOreRiconosciute = arrotonda2(incluse.reduce((t, r) => t + (r.oreRetribuiteHR ?? 0), 0));
-    c.totaleGettoni = arrotonda2(incluse.reduce((t, r) => t + (r.oreGettoneHR ?? 0), 0));
+    c.totaleOreRiconosciute = totali.oreRetribuite;
+    c.totaleGettoni = totali.oreGettone;
+    c.totaleOreNonRetribuite = totali.oreNonRetribuite;
+    c.totaleOrePermessi = totali.orePermessi;
   }
 
   async getStatoMese(anno: number, mese: number): Promise<StatoMese> {
@@ -746,12 +951,25 @@ export class BackendDemo implements Backend {
     const s = this.richiediSessione();
     this.richiediRuolo(s, 'hr', 'admin');
     const chiusura = this.dati.chiusure.find((x) => x.anno === anno && x.mese === mese) ?? {
-      periodo: periodoDi(anno, mese), anno, mese, stato: 'Aperto' as const, numeroRichieste: 0, totaleOreRiconosciute: 0, totaleGettoni: 0, filePaghe: [], riaperture: [],
+      periodo: periodoDi(anno, mese), anno, mese, stato: 'Aperto' as const, numeroRichieste: 0, totaleOreRiconosciute: 0, totaleGettoni: 0, totaleOreNonRetribuite: 0, totaleOrePermessi: 0, filePaghe: [], riaperture: [],
     };
     const delMese = this.dati.richieste.filter((r) => r.annoCompetenza === anno && r.meseCompetenza === mese && r.stato !== 'Bozza');
+    const aperte = delMese.filter((r) => APERTI.has(r.stato));
+    // raggruppamento per coordinatore: chi deve ancora esprimersi
+    const gruppi = new Map<string, ApertePerCoordinatore>();
+    for (const r of aperte) {
+      const chiave = r.coordinatoreLogin ?? '-';
+      const g = gruppi.get(chiave) ?? { coordinatoreLogin: r.coordinatoreLogin, coordinatoreNome: r.coordinatoreNome ?? 'Senza coordinatore', inAttesaCoordinatore: 0, inIntegrazione: 0, inAttesaHR: 0, totale: 0 };
+      if (r.stato === 'Inviata al coordinatore' || r.stato === 'In attesa del coordinatore') g.inAttesaCoordinatore++;
+      else if (r.stato === 'Integrazione richiesta dal coordinatore' || r.stato === 'Integrazione richiesta da HR') g.inIntegrazione++;
+      else g.inAttesaHR++;
+      g.totale++;
+      gruppi.set(chiave, g);
+    }
     return this.copia({
       chiusura,
-      aperte: delMese.filter((r) => APERTI.has(r.stato)),
+      aperte,
+      apertePerCoordinatore: [...gruppi.values()].sort((a, b) => b.inAttesaCoordinatore - a.inAttesaCoordinatore || b.totale - a.totale || a.coordinatoreNome.localeCompare(b.coordinatoreNome, 'it')),
       validate: delMese.filter((r) => r.stato === 'Validata da HR').length,
       daInviare: this.dati.richieste.filter((r) => r.periodoChiusura === chiusura.periodo && r.stato === 'Inclusa nel riepilogo mensile').length,
       anomalie: rilevaAnomalie(delMese, this.dati.richieste, this.dati.lavoratori),
@@ -806,6 +1024,7 @@ export class BackendDemo implements Backend {
     if (!incluse.length) throw new ErroreApi('CONFLITTO', 'Nessuna richiesta da inviare a Payroll per questo periodo.');
     const righe = righePaghe(incluse, this.dati.lavoratori);
     const senzaCf = righe.filter((x) => !x.codiceFiscale).length;
+    const totali = totaliPaghe(righe);
     const versione = c.filePaghe.length + 1;
     const file: FilePaghe = {
       id: this.nuovoId('fp'),
@@ -814,8 +1033,10 @@ export class BackendDemo implements Backend {
       generatoIl: this.ora(),
       generatoDa: s.login,
       righe: righe.length,
-      totaleOreRetribuite: arrotonda2(righe.reduce((t, x) => t + x.oreRetribuite, 0)),
-      totaleOreGettone: arrotonda2(righe.reduce((t, x) => t + x.oreGettone, 0)),
+      totaleOreRetribuite: totali.oreRetribuite,
+      totaleOreGettone: totali.oreGettone,
+      totaleOreNonRetribuite: totali.oreNonRetribuite,
+      totaleOrePermessi: totali.orePermessi,
       contenuto: generaCsvPaghe(righe),
     };
     c.filePaghe.push(file);
@@ -1044,7 +1265,7 @@ export class BackendDemo implements Backend {
     const delMese = this.dati.richieste.filter((r) => r.annoCompetenza === anno && r.meseCompetenza === mese && r.stato !== 'Bozza');
     const aperte = (x: Richiesta[]) => x.filter((r) => APERTI.has(r.stato));
     const respinte = (x: Richiesta[]) => x.filter((r) => r.stato === 'Respinta dal coordinatore' || r.stato === 'Respinta da HR');
-    const incomplete = (x: Richiesta[]) => x.filter((r) => r.stato !== 'Annullata' && (!r.allegati.some((a) => a.tipo === 'Attestato') || r.possibileDuplicato));
+    const incomplete = (x: Richiesta[]) => x.filter((r) => r.stato !== 'Annullata' && (r.possibileDuplicato || !r.coordinatoreLogin));
     let inviate = 0;
     const coordinatori = [...new Set(delMese.map((r) => r.coordinatoreLogin).filter((x): x is string => !!x))];
     for (const c of coordinatori) {

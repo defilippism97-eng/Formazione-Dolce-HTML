@@ -7,3 +7,4 @@ export * from './riepilogo';
 export * from './anomalie';
 export * from './payroll';
 export * from './promemoria';
+export * from './monteore';

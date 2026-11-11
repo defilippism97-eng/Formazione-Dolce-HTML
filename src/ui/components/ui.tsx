@@ -3,7 +3,7 @@
  * e responsive. Gli stili sono in src/styles/app.css.
  */
 import { forwardRef, useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
-import { INFO_STATI, type StatoRichiesta } from '../../domain';
+import { INFO_STATI, type SituazioneMonteOre, type StatoRichiesta } from '../../domain';
 import { Icona, type NomeIcona } from './Icona';
 
 // ---------------------------------------------------------------------------
@@ -275,6 +275,35 @@ export function Indicatore({ etichetta, valore, nota, tono = 'neutro', onClick }
       <span className="indicatore-etichetta">{etichetta}</span>
       {nota && <span className="indicatore-nota">{nota}</span>}
     </Tag>
+  );
+}
+
+/**
+ * Situazione di un monte ore dei permessi (Diritto allo studio / Riqualifica professionale):
+ * ore già riconosciute, ore in corso di approvazione e ore residue, con barra di avanzamento.
+ */
+export function BarraMonteOre({ situazione, compatta }: { situazione: Pick<SituazioneMonteOre, 'oreTotali' | 'oreUsufruite' | 'oreImpegnate' | 'oreResidue'>; compatta?: boolean }) {
+  const { oreTotali, oreUsufruite, oreImpegnate, oreResidue } = situazione;
+  const pct = (n: number) => `${oreTotali > 0 ? Math.min(100, Math.max(0, (n / oreTotali) * 100)) : 0}%`;
+  const h = (n: number) => `${new Intl.NumberFormat('it-IT', { maximumFractionDigits: 2 }).format(n)} h`;
+  return (
+    <div className="monte-ore">
+      <div
+        className="barra-monte"
+        role="img"
+        aria-label={`Monte ore: ${h(oreTotali)} assegnate, ${h(oreUsufruite)} usufruite, ${h(oreImpegnate)} in approvazione, ${h(oreResidue)} residue`}
+      >
+        <span className="usufruite" style={{ width: pct(oreUsufruite) }} />
+        <span className="impegnate" style={{ width: pct(oreImpegnate) }} />
+      </div>
+      {!compatta && (
+        <div className="legenda-monte">
+          <span className="usufruite">Usufruite {h(oreUsufruite)}</span>
+          <span className="impegnate">In approvazione {h(oreImpegnate)}</span>
+          <span>Residue {h(oreResidue)}</span>
+        </div>
+      )}
+    </div>
   );
 }
 

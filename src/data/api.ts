@@ -13,6 +13,7 @@ import type {
   AssegnazioneRuolo,
   AzioniConsentite,
   ChiusuraMensile,
+  CorrezioneCorsoInput,
   Corso,
   DatiRichiestaInput,
   ErroreValidazione,
@@ -20,9 +21,11 @@ import type {
   FilePaghe,
   FiltriRichieste,
   Lavoratore,
+  MonteOre,
   Notifica,
   Richiesta,
   SegnalazioneVariazione,
+  SituazioneMonteOre,
   Sessione,
   StatoLavoratore,
   Struttura,
@@ -68,6 +71,11 @@ export interface Profilo {
   coordinatoreEmail?: string;
   stato?: StatoLavoratore;
   segnalazioni: SegnalazioneVariazione[];
+  /**
+   * Monte ore dei permessi (diritto allo studio, riqualifica professionale) attivati da HR
+   * per questo lavoratore: se è vuoto, il lavoratore può rendicontare solo la formazione.
+   */
+  monteOre: SituazioneMonteOre[];
 }
 
 export interface FileCaricato {
@@ -94,20 +102,30 @@ export interface DettaglioRichiesta {
   storico: VoceRegistro[];
   /** Numeri delle altre richieste con stesso lavoratore, corso e data. */
   duplicati: string[];
+  /** Solo per i permessi: situazione del monte ore da cui si scalano le ore (senza contare questa richiesta in `oreResidue`). */
+  monteOre?: SituazioneMonteOre & { oreResidueSenzaQuesta: number };
+  /** Il corso prevede il gettone (per i corsi a catalogo). */
+  gettonePrevisto: boolean;
 }
 
+/**
+ * Decisione di coordinatore o HR. In approvazione le tre voci devono sommare alle ore frequentate.
+ * Per i permessi: `oreRetribuite` = ore di permesso riconosciute (a carico del monte ore),
+ * `oreNonRetribuite` = ore non riconosciute, `oreGettone` = 0.
+ */
 export interface DecisioneInput {
   esito: EsitoDecisione;
   oreRetribuite: number;
   oreGettone: number;
+  oreNonRetribuite: number;
   nota?: string;
 }
 
 export interface DecisioneMultiplaInput {
   esito: EsitoDecisione;
   nota?: string;
-  /** Ore non indicate = si usano le ore riconosciute dal coordinatore. */
-  voci: { id: string; oreRetribuite?: number; oreGettone?: number }[];
+  /** Ore non indicate = si usano le ore riconosciute dal coordinatore (le tre voci vanno indicate insieme). */
+  voci: { id: string; oreRetribuite?: number; oreGettone?: number; oreNonRetribuite?: number }[];
 }
 
 export interface RisultatoMultiplo {
@@ -119,21 +137,41 @@ export interface LavoratoreTeam {
   id: string;
   login: string;
   nominativo: string;
+  area: string;
   servizio: string;
   centroDiCosto: string;
   stato: StatoLavoratore;
+  /** Segnalazioni di variazione dell'organigramma ancora da gestire da parte di HR. */
+  segnalazioniAperte: number;
+}
+
+/** Richieste ancora aperte di un coordinatore, per l'avviso alla chiusura del mese. */
+export interface ApertePerCoordinatore {
+  coordinatoreLogin?: string;
+  coordinatoreNome: string;
+  /** In attesa della decisione del coordinatore. */
+  inAttesaCoordinatore: number;
+  /** In attesa di correzione da parte del lavoratore. */
+  inIntegrazione: number;
+  /** Già approvate dal coordinatore, in attesa di HR. */
+  inAttesaHR: number;
+  totale: number;
 }
 
 export interface StatoMese {
   chiusura: ChiusuraMensile;
   /** Richieste del mese non ancora concluse (escluse le bozze). */
   aperte: Richiesta[];
+  /** Le stesse richieste raggruppate per coordinatore, dal più carico al meno carico. */
+  apertePerCoordinatore: ApertePerCoordinatore[];
   /** Richieste validate da HR, pronte per la chiusura. */
   validate: number;
   /** Richieste incluse nel riepilogo, pronte per il file paghe. */
   daInviare: number;
   anomalie: Anomalia[];
 }
+
+export type MonteOreInput = Pick<MonteOre, 'lavoratoreId' | 'tipo' | 'oreTotali' | 'validoDal' | 'validoAl' | 'attivo' | 'note'> & { id?: string };
 
 export interface Anagrafiche {
   lavoratori: Lavoratore[];
@@ -164,7 +202,12 @@ export interface Backend {
   // --- Profilo del lavoratore
   getProfilo(): Promise<Profilo>;
   aggiornaProfilo(dati: { emailContatto?: string; codiceFiscale?: string }): Promise<Profilo>;
-  segnalaVariazione(testo: string): Promise<Profilo>;
+  /**
+   * Segnala a HR una variazione dei dati organizzativi (servizio, coordinatore...).
+   * Senza `lavoratoreId` riguarda chi chiama; con `lavoratoreId` è il coordinatore che segnala
+   * per un lavoratore del proprio team. Restituisce il profilo di chi chiama.
+   */
+  segnalaVariazione(testo: string, lavoratoreId?: string): Promise<Profilo>;
 
   // --- Dati di consultazione
   getCatalogo(): Promise<Corso[]>;
@@ -186,6 +229,16 @@ export interface Backend {
   getLavoratoriTeam(): Promise<LavoratoreTeam[]>;
   decisioneCoordinatore(id: string, input: DecisioneInput): Promise<Richiesta>;
   decisioneHR(input: DecisioneMultiplaInput): Promise<RisultatoMultiplo>;
+  /**
+   * Corregge titolo e dati di un corso esterno inserito dal lavoratore, prima di approvare
+   * (coordinatore della richiesta o HR). La correzione vale per tutte le sessioni non ancora
+   * validate dello stesso corso.
+   */
+  correggiCorso(richiestaId: string, dati: CorrezioneCorsoInput): Promise<Richiesta>;
+
+  // --- Monte ore dei permessi (HR)
+  getMontiOre(): Promise<SituazioneMonteOre[]>;
+  salvaMonteOre(m: MonteOreInput): Promise<SituazioneMonteOre>;
 
   // --- Chiusura mensile e paghe (HR)
   getStatoMese(anno: number, mese: number): Promise<StatoMese>;

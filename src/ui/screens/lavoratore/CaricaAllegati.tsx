@@ -1,5 +1,8 @@
 /**
- * Sezione "Allegati" del modulo: attestato e altra documentazione.
+ * Sezione "Allegati" del modulo.
+ *  - Attestato: solo per i corsi esterni (di un committente o di un altro ente) ed è facoltativo;
+ *    per i corsi di Società Dolce non si allega (è già a sistema), per i permessi non esiste.
+ *  - Altra documentazione: sempre facoltativa.
  * I file nuovi restano nel browser fino al salvataggio della richiesta.
  */
 import { useId, useRef, useState, type DragEvent } from 'react';
@@ -48,6 +51,9 @@ export function SezioneAllegati({
   onRimossi,
   onNuovi,
   errore,
+  attestato,
+  descrizioneAltra = 'Ad esempio foglio firme, programma del corso o altra documentazione utile.',
+  nota,
 }: {
   richiestaId?: string;
   esistenti: Allegato[];
@@ -57,18 +63,43 @@ export function SezioneAllegati({
   onNuovi: (n: FileNuovo[]) => void;
   /** Errore restituito dal server sugli allegati. */
   errore?: string;
+  /** `true` solo per i corsi esterni: l'attestato si può allegare (facoltativo). */
+  attestato: boolean;
+  descrizioneAltra?: string;
+  /** Spiegazione mostrata sopra le zone (es. perché l'attestato non è richiesto). */
+  nota?: string;
 }) {
   const totale = esistenti.filter((a) => !rimossi.includes(a.id)).length + nuovi.length;
   const comuni = { richiestaId, esistenti, rimossi, nuovi, onRimossi, onNuovi, disponibili: MAX_ALLEGATI - totale };
+  // attestati rimasti da una scelta precedente (es. il corso era esterno e ora è a catalogo): si possono solo togliere
+  const attestatiResidui = !attestato && (esistenti.some((a) => a.tipo === 'Attestato' && !rimossi.includes(a.id)) || nuovi.some((n) => n.tipo === 'Attestato'));
+  const dueZone = attestato || attestatiResidui;
   return (
     <div className="allegati-modulo">
+      {nota && <p>{nota}</p>}
       <p className="testo-secondario testo-piccolo">
-        Formati ammessi: PDF, JPG, PNG, HEIC (foto da smartphone) · massimo 10 MB per file · al massimo {MAX_ALLEGATI} file in tutto
+        Gli allegati sono facoltativi. Formati ammessi: PDF, JPG, PNG, HEIC (foto da smartphone) · massimo 10 MB per file · al massimo {MAX_ALLEGATI} file in tutto
         {totale > 0 && ` (ne hai ${totale})`}.
       </p>
-      <div className="griglia griglia-2">
-        <ZonaAllegati {...comuni} tipo="Attestato" titolo="Attestato rilasciato" descrizione="L’attestato di partecipazione rilasciato dall’ente (anche una foto leggibile)." />
-        <ZonaAllegati {...comuni} tipo="Altra documentazione" titolo="Altra documentazione" descrizione="Ad esempio foglio firme, programma del corso o altra documentazione utile." />
+      <div className={dueZone ? 'griglia griglia-2' : 'griglia'}>
+        {attestato && (
+          <ZonaAllegati
+            {...comuni}
+            tipo="Attestato"
+            titolo="Attestato rilasciato (facoltativo)"
+            descrizione="Se l’ente ti ha rilasciato un attestato di partecipazione puoi allegarlo (anche una foto leggibile). Non è obbligatorio."
+          />
+        )}
+        {attestatiResidui && (
+          <ZonaAllegati
+            {...comuni}
+            tipo="Attestato"
+            titolo="Attestato"
+            descrizione="Per questa richiesta l’attestato non va allegato: rimuovi i file qui sotto (quelli «Da caricare» non verranno inviati)."
+            soloRimozione
+          />
+        )}
+        <ZonaAllegati {...comuni} tipo="Altra documentazione" titolo="Altra documentazione (facoltativa)" descrizione={descrizioneAltra} />
       </div>
       {errore && (
         <span className="campo-messaggio-errore" role="alert">
@@ -90,10 +121,13 @@ function ZonaAllegati({
   onRimossi,
   onNuovi,
   disponibili,
+  soloRimozione,
 }: {
   tipo: TipoAllegato;
   titolo: string;
   descrizione: string;
+  /** Nessun nuovo file: si possono solo togliere quelli presenti. */
+  soloRimozione?: boolean;
   richiestaId?: string;
   esistenti: Allegato[];
   rimossi: string[];
@@ -140,11 +174,12 @@ function ZonaAllegati({
       className={`zona-file zona-allegati${trascina ? ' zona-allegati-attiva' : ''}`}
       aria-labelledby={`${id}-titolo`}
       onDragOver={(e) => {
+        if (soloRimozione) return;
         e.preventDefault();
         setTrascina(true);
       }}
       onDragLeave={() => setTrascina(false)}
-      onDrop={rilascia}
+      onDrop={(e) => !soloRimozione && rilascia(e)}
     >
       <h4 id={`${id}-titolo`}>
         <Icona nome={tipo === 'Attestato' ? 'file' : 'allegato'} /> {titolo}
@@ -192,24 +227,28 @@ function ZonaAllegati({
           ))}
         </ul>
       )}
-      <input
-        ref={rifInput}
-        id={`${id}-input`}
-        type="file"
-        accept={ESTENSIONI_AMMESSE}
-        multiple
-        aria-label={`Aggiungi file: ${titolo}`}
-        onChange={(e) => {
-          aggiungi(e.target.files);
-          e.target.value = '';
-        }}
-      />
-      <div className="zona-allegati-azioni">
-        <Pulsante variante="secondario" piccolo icona="allegato" disabled={disponibili <= 0} onClick={() => rifInput.current?.click()} aria-describedby={`${id}-titolo`}>
-          {vuota ? 'Scegli file' : 'Aggiungi file'}
-        </Pulsante>
-        <span className="testo-secondario testo-piccolo nascosto-mobile">oppure trascinali qui</span>
-      </div>
+      {!soloRimozione && (
+        <>
+          <input
+            ref={rifInput}
+            id={`${id}-input`}
+            type="file"
+            accept={ESTENSIONI_AMMESSE}
+            multiple
+            aria-label={`Aggiungi file: ${titolo}`}
+            onChange={(e) => {
+              aggiungi(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <div className="zona-allegati-azioni">
+            <Pulsante variante="secondario" piccolo icona="allegato" disabled={disponibili <= 0} onClick={() => rifInput.current?.click()} aria-describedby={`${id}-titolo`}>
+              {vuota ? 'Scegli file' : 'Aggiungi file'}
+            </Pulsante>
+            <span className="testo-secondario testo-piccolo nascosto-mobile">oppure trascinali qui</span>
+          </div>
+        </>
+      )}
       {errori.length > 0 && (
         <div className="campo-messaggio-errore" role="alert">
           {errori.map((e) => (

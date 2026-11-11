@@ -11,7 +11,7 @@ import { useCarica } from '../../hooks';
 import { ROTTE } from '../../router';
 import { nomeUtente, opzioniDistinte } from './comuni';
 
-const ENTITA: VoceRegistro['entita'][] = ['Richiesta', 'Lavoratore', 'Struttura', 'Corso', 'Ruolo', 'Chiusura'];
+const ENTITA: VoceRegistro['entita'][] = ['Richiesta', 'Lavoratore', 'Struttura', 'Corso', 'Ruolo', 'Chiusura', 'Monte ore'];
 const PAGINA = 100;
 
 export function AdminRegistro({ utenti }: { utenti: readonly UtenteDirectory[] }) {
@@ -42,7 +42,8 @@ export function AdminRegistro({ utenti }: { utenti: readonly UtenteDirectory[] }
   return (
     <div className="pagina">
       <p className="testo-secondario" style={{ margin: 0 }}>
-        Ogni variazione è registrata con data, autore e ruolo. I valori del codice fiscale non vengono mai scritti nel registro.
+        Ogni variazione è registrata con data, autore e ruolo: decisioni e ore riconosciute (retribuite, gettone, non retribuite), correzioni dei corsi
+        esterni, assegnazioni e modifiche dei monte ore dei permessi, anagrafiche e chiusure. I valori del codice fiscale non vengono mai scritti nel registro.
       </p>
       <BarraFiltri
         onAzzera={() => {

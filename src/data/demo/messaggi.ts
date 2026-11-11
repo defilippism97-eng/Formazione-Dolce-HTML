@@ -3,20 +3,29 @@
  * devono usare gli stessi contenuti; le e-mail ai lavoratori vanno all'e-mail di contatto.
  * Le e-mail NON contengono dati fiscali: i dettagli si consultano nell'app dopo l'accesso.
  */
-import { nomeMese, type KPI } from '../../domain';
-import type { Notifica, Richiesta } from '../../domain';
+import { nomeMese, titoloRichiesta, type KPI } from '../../domain';
+import type { MonteOre, Notifica, Richiesta } from '../../domain';
 
 export type Messaggio = Pick<Notifica, 'flusso' | 'oggetto' | 'testo'>;
 
 const FIRMA = '\n\nGestione ore formazione – Società Dolce\nMessaggio automatico, non rispondere.';
 
+const dataIT = (d: string) => d.split('-').reverse().join('/');
+
+/** Ore nelle tre voci (per i permessi: ore di permesso). */
+function oreVoci(permesso: boolean, retribuite = 0, gettone = 0, nonRetribuite = 0): string {
+  if (permesso) return `${retribuite} ore di permesso${nonRetribuite ? `, ${nonRetribuite} non riconosciute` : ''}`;
+  return `${retribuite} retribuite, ${gettone} gettone, ${nonRetribuite} non retribuite`;
+}
+
 function riassunto(r: Richiesta): string {
+  const permesso = r.tipologia !== 'Formazione';
   return [
     `Richiesta: ${r.numero}`,
     `Lavoratore: ${r.cognome} ${r.nome}`,
-    `Corso: ${r.titoloCorsoLibero || r.titoloCorso} (${r.codiceCorso})`,
-    `Data: ${r.dataSessione.split('-').reverse().join('/')} – ${r.oraIngresso}-${r.oraUscita}`,
-    `Ore richieste: ${r.oreRetribuiteRichieste} retribuite, ${r.oreGettoneRichieste} gettone`,
+    permesso ? `Permesso: ${titoloRichiesta(r)}` : `Corso: ${titoloRichiesta(r)} (${r.codiceCorso})`,
+    `Data: ${dataIT(r.dataSessione)} – ${r.oraIngresso}-${r.oraUscita}${r.pausaPrevista ? ` (pausa di ${r.pausaMinuti} minuti)` : ''}`,
+    `Ore richieste: ${oreVoci(permesso, r.oreRetribuiteRichieste, r.oreGettoneRichieste, r.oreNonRetribuiteRichieste)}`,
   ].join('\n');
 }
 
@@ -26,7 +35,7 @@ export const messaggi = {
       flusso: 'F1',
       oggetto: `Nuova richiesta di formazione da approvare – ${r.cognome} ${r.nome}`,
       testo:
-        `Gentile ${r.coordinatoreNome ?? 'coordinatore'},\n${r.nome} ${r.cognome} ha inviato una richiesta di riconoscimento delle ore di formazione.\n\n` +
+        `Gentile ${r.coordinatoreNome ?? 'coordinatore'},\n${r.nome} ${r.cognome} ha inviato una richiesta di riconoscimento ${r.tipologia === 'Formazione' ? 'delle ore di formazione' : `di un permesso (${r.tipologia})`}.\n\n` +
         riassunto(r) +
         (duplicato ? '\n\nATTENZIONE: possibile duplicato (stesso corso e stessa data di un’altra richiesta).' : '') +
         '\n\nApri la richiesta per approvarla, respingerla o chiedere un’integrazione.' +
@@ -53,7 +62,7 @@ export const messaggi = {
   esitoCoordinatore(r: Richiesta): Messaggio {
     const testi: Record<string, string> = {
       'In attesa di validazione HR':
-        `il coordinatore ha APPROVATO la tua richiesta, riconoscendo ${r.oreRetribuiteCoord ?? 0} ore retribuite e ${r.oreGettoneCoord ?? 0} ore gettone. Ora la richiesta passa all'Ufficio HR/Formazione per la validazione definitiva.`,
+        `il coordinatore ha APPROVATO la tua richiesta, riconoscendo ${oreVoci(r.tipologia !== 'Formazione', r.oreRetribuiteCoord, r.oreGettoneCoord, r.oreNonRetribuiteCoord)}. Ora la richiesta passa all'Ufficio HR/Formazione per la validazione definitiva.`,
       'Respinta dal coordinatore': `il coordinatore ha RESPINTO la tua richiesta.\nMotivazione: ${r.noteCoordinatore ?? ''}`,
       'Integrazione richiesta dal coordinatore': `il coordinatore chiede un'INTEGRAZIONE alla tua richiesta.\nCosa correggere: ${r.noteCoordinatore ?? ''}\n\nApri l'app, modifica la richiesta e inviala di nuovo.`,
     };
@@ -66,7 +75,7 @@ export const messaggi = {
 
   esitoHR(r: Richiesta, perCoordinatore: boolean): Messaggio {
     const testi: Record<string, string> = {
-      'Validata da HR': `l'Ufficio HR/Formazione ha VALIDATO la richiesta: ${r.oreRetribuiteHR ?? 0} ore retribuite e ${r.oreGettoneHR ?? 0} ore gettone riconosciute in via definitiva.`,
+      'Validata da HR': `l'Ufficio HR/Formazione ha VALIDATO la richiesta in via definitiva: ${oreVoci(r.tipologia !== 'Formazione', r.oreRetribuiteHR, r.oreGettoneHR, r.oreNonRetribuiteHR)}.`,
       'Respinta da HR': `l'Ufficio HR/Formazione ha RESPINTO la richiesta.\nMotivazione: ${r.noteHR ?? ''}`,
       'Integrazione richiesta da HR': `l'Ufficio HR/Formazione chiede un'INTEGRAZIONE alla richiesta.\nCosa correggere: ${r.noteHR ?? ''}`,
     };
@@ -97,7 +106,7 @@ export const messaggi = {
   riepilogoMensile(destinatario: string, anno: number, mese: number, kpi: KPI, aperte: Richiesta[], respinte: Richiesta[], incomplete: Richiesta[]): Messaggio {
     const elenco = (titolo: string, righe: Richiesta[]) =>
       righe.length
-        ? `\n\n${titolo} (${righe.length}):\n` + righe.map((r) => `- ${r.numero} ${r.cognome} ${r.nome} – ${r.titoloCorsoLibero || r.titoloCorso} – ${r.stato}`).join('\n')
+        ? `\n\n${titolo} (${righe.length}):\n` + righe.map((r) => `- ${r.numero} ${r.cognome} ${r.nome} – ${titoloRichiesta(r)} – ${r.stato}`).join('\n')
         : '';
     return {
       flusso: 'F5',
@@ -106,10 +115,12 @@ export const messaggi = {
         `Riepilogo della formazione di ${nomeMese(mese)} ${anno} (${destinatario}).\n\n` +
         `Lavoratori coinvolti: ${kpi.lavoratori}\nRichieste: ${kpi.richieste}\nOre frequentate: ${kpi.oreFrequentate}\n` +
         `Ore retribuite richieste: ${kpi.oreRetribuiteRichieste} – riconosciute dai coordinatori: ${kpi.oreRetribuiteCoord} – validate da HR: ${kpi.oreRetribuiteHR}\n` +
-        `Ore gettone richieste: ${kpi.oreGettoneRichieste} – riconosciute dai coordinatori: ${kpi.oreGettoneCoord} – validate da HR: ${kpi.oreGettoneHR}` +
+        `Ore gettone richieste: ${kpi.oreGettoneRichieste} – riconosciute dai coordinatori: ${kpi.oreGettoneCoord} – validate da HR: ${kpi.oreGettoneHR}\n` +
+        `Ore non retribuite richieste: ${kpi.oreNonRetribuiteRichieste} – riconosciute dai coordinatori: ${kpi.oreNonRetribuiteCoord} – validate da HR: ${kpi.oreNonRetribuiteHR}\n` +
+        `Ore di permesso (diritto allo studio e riqualifica) richieste: ${kpi.orePermessiRichieste} – validate da HR: ${kpi.orePermessiHR}` +
         elenco('ANCORA APERTE', aperte) +
         elenco('RESPINTE', respinte) +
-        elenco('INCOMPLETE (attestato mancante o anomalie)', incomplete) +
+        elenco('CON ANOMALIE (possibili duplicati, coordinatore mancante)', incomplete) +
         FIRMA,
     };
   },
@@ -122,11 +133,23 @@ export const messaggi = {
     };
   },
 
-  segnalazioneVariazione(nominativo: string, testo: string): Messaggio {
+  segnalazioneVariazione(nominativo: string, testo: string, coordinatore?: string): Messaggio {
     return {
       flusso: 'Sistema',
       oggetto: `Segnalazione di variazione dati – ${nominativo}`,
-      testo: `${nominativo} segnala una variazione dei propri dati organizzativi:\n\n"${testo}"\n\nGestiscila dalla schermata Amministrazione > Lavoratori.${FIRMA}`,
+      testo:
+        (coordinatore
+          ? `Il coordinatore ${coordinatore} segnala una variazione dei dati organizzativi di ${nominativo}:`
+          : `${nominativo} segnala una variazione dei propri dati organizzativi:`) +
+        `\n\n"${testo}"\n\nGestiscila dalla schermata Amministrazione > Lavoratori.${FIRMA}`,
+    };
+  },
+
+  monteOreAssegnato(nome: string, m: MonteOre): Messaggio {
+    return {
+      flusso: 'Sistema',
+      oggetto: `${m.tipo}: monte ore assegnato`,
+      testo: `Ciao ${nome},\nl'Ufficio HR/Formazione ti ha assegnato ${m.oreTotali} ore di "${m.tipo}" dal ${dataIT(m.validoDal)} al ${dataIT(m.validoAl)}.\nDa oggi puoi rendicontare i permessi nell'app: le ore si scalano dal monte ore fino a esaurimento.${FIRMA}`,
     };
   },
 

@@ -1,12 +1,12 @@
 /**
- * Regole e controlli sulle richieste (R1–R12 di docs/ARCHITETTURA.md).
+ * Regole e controlli sulle richieste (R1–R14 di docs/ARCHITETTURA.md).
  *
  * Funzioni pure: le usa l'interfaccia per i messaggi immediati e le DEVE usare
  * il backend per i controlli vincolanti (il browser non è affidabile).
  */
-import { arrotonda2, isDataValida, isOrarioValido, oreTra, periodoDiData } from './calcoli';
+import { arrotonda2, isDataValida, isOrarioValido, minuti, periodoDiData } from './calcoli';
 import { ESCLUSI_DAI_CONTROLLI } from './stati';
-import type { Corso, DataISO, Dichiarazioni, EnteErogatore, Modalita, Richiesta } from './types';
+import type { Corso, DataISO, Dichiarazioni, EnteErogatore, Modalita, Richiesta, Tipologia } from './types';
 
 export interface NuovoCorsoInput {
   titolo: string;
@@ -18,18 +18,32 @@ export interface NuovoCorsoInput {
 
 /** Dati inseriti dal lavoratore nel modulo "Nuova richiesta". */
 export interface DatiRichiestaInput {
-  ente: EnteErogatore;
-  /** Corso a catalogo (Datore di lavoro) o corso esterno già usato (storico). */
+  tipologia: Tipologia;
+  // --- Formazione
+  /** Dedotto dalla scelta del corso: a catalogo = Datore di lavoro, altrimenti Committente o altro soggetto. */
+  ente?: EnteErogatore;
+  /** Corso a catalogo (Datore di lavoro) o corso esterno già inserito in precedenza. */
   corsoId?: string;
   /** Corso esterno nuovo (solo per "Committente o altro soggetto"). */
   nuovoCorso?: NuovoCorsoInput;
+  // --- Permessi (diritto allo studio, riqualifica professionale)
+  /** Attività svolta con il permesso (es. "Esame di Pedagogia generale"). */
+  descrizioneAttivita?: string;
+  // --- Sessione
   dataSessione: DataISO;
   oraInizioSessione: string;
   oraFineSessione: string;
+  pausaPrevista: boolean;
+  pausaMinuti: number;
+  /** La pausa cade nell'orario di presenza (conta solo se ingresso/uscita differiscono dalla sessione). */
+  pausaInPresenza: boolean;
+  /** Per i permessi coincidono con inizio e fine. */
   oraIngresso: string;
   oraUscita: string;
+  // --- Ripartizione delle ore frequentate (per i permessi la calcola il server)
   oreRetribuiteRichieste: number;
   oreGettoneRichieste: number;
+  oreNonRetribuiteRichieste: number;
   noteLavoratore?: string;
   dichiarazioni: Dichiarazioni;
 }
@@ -39,9 +53,17 @@ export interface ErroreValidazione {
   messaggio: string;
 }
 
+/** Disponibilità del monte ore per la data del permesso. */
+export interface DisponibilitaMonteOre {
+  /** Ore ancora disponibili, senza contare la richiesta in modifica. */
+  oreResidue: number;
+  validoDal: DataISO;
+  validoAl: DataISO;
+}
+
 export interface ContestoValidazione {
   login: string;
-  /** Corso risolto (catalogo o storico); `null` se si sta creando un corso esterno nuovo. */
+  /** Corso risolto (catalogo o già inserito); `null` se si sta creando un corso esterno nuovo o per i permessi. */
   corso: Corso | null;
   /** Altre richieste dello stesso lavoratore (esclusa quella in modifica). */
   altreRichieste: readonly Richiesta[];
@@ -49,23 +71,52 @@ export interface ContestoValidazione {
   coordinatoreLogin?: string;
   profiloCompleto: boolean;
   oggi: DataISO;
+  /** Solo per i permessi: monte ore attivo per il tipo e la data richiesti (`null` = nessuno). */
+  monteOre?: DisponibilitaMonteOre | null;
+}
+
+export interface RipartizioneOre {
+  retribuite: number;
+  gettone: number;
+  nonRetribuite: number;
 }
 
 export const MAX_LUNGHEZZA_NOTE = 2000;
-const TOLLERANZA = 0.001;
+export const MAX_PAUSA_MINUTI = 240;
+const TOLLERANZA = 0.005;
 
-/** Durata della sessione e ore frequentate calcolate dagli orari (null se orari non validi). */
-export function calcolaOre(input: Pick<DatiRichiestaInput, 'oraInizioSessione' | 'oraFineSessione' | 'oraIngresso' | 'oraUscita'>): {
+export function isPermesso(r: { tipologia: Tipologia }): boolean {
+  return r.tipologia !== 'Formazione';
+}
+
+/** Titolo da mostrare per una richiesta: corso oppure attività del permesso. */
+export function titoloRichiesta(r: Pick<Richiesta, 'tipologia' | 'titoloCorso' | 'titoloCorsoLibero' | 'descrizioneAttivita'>): string {
+  if (r.tipologia !== 'Formazione') return r.descrizioneAttivita ? `${r.tipologia} – ${r.descrizioneAttivita}` : r.tipologia;
+  return r.titoloCorsoLibero || r.titoloCorso;
+}
+
+type OrariInput = Pick<DatiRichiestaInput, 'oraInizioSessione' | 'oraFineSessione' | 'oraIngresso' | 'oraUscita'> &
+  Partial<Pick<DatiRichiestaInput, 'pausaPrevista' | 'pausaMinuti' | 'pausaInPresenza'>>;
+
+/**
+ * Durata della sessione e ore frequentate, al netto della pausa (null se gli orari non sono validi).
+ * La pausa si toglie dalle ore frequentate se la presenza coincide con la sessione, oppure se il
+ * lavoratore dichiara di averla fatta durante la propria presenza.
+ */
+export function calcolaOre(input: OrariInput): {
   durataSessione: number | null;
   oreFrequentate: number | null;
+  /** Minuti di pausa tolti dalle ore frequentate. */
+  pausaApplicata: number;
 } {
-  const durataSessione =
-    isOrarioValido(input.oraInizioSessione) && isOrarioValido(input.oraFineSessione)
-      ? oreTra(input.oraInizioSessione, input.oraFineSessione)
-      : null;
-  const oreFrequentate =
-    isOrarioValido(input.oraIngresso) && isOrarioValido(input.oraUscita) ? oreTra(input.oraIngresso, input.oraUscita) : null;
-  return { durataSessione, oreFrequentate };
+  const pausa = input.pausaPrevista && Number.isFinite(input.pausaMinuti) && (input.pausaMinuti ?? 0) > 0 ? (input.pausaMinuti as number) : 0;
+  const sessioneValida = isOrarioValido(input.oraInizioSessione) && isOrarioValido(input.oraFineSessione);
+  const presenzaValida = isOrarioValido(input.oraIngresso) && isOrarioValido(input.oraUscita);
+  const durataSessione = sessioneValida ? arrotonda2((minuti(input.oraFineSessione) - minuti(input.oraInizioSessione) - pausa) / 60) : null;
+  const coincide = input.oraIngresso === input.oraInizioSessione && input.oraUscita === input.oraFineSessione;
+  const pausaApplicata = pausa > 0 && (coincide || input.pausaInPresenza !== false) ? pausa : 0;
+  const oreFrequentate = presenzaValida ? arrotonda2((minuti(input.oraUscita) - minuti(input.oraIngresso) - pausaApplicata) / 60) : null;
+  return { durataSessione, oreFrequentate, pausaApplicata };
 }
 
 function numeroValido(n: unknown): n is number {
@@ -74,27 +125,58 @@ function numeroValido(n: unknown): n is number {
 
 /** Somma delle durate di sessione già dichiarate dal lavoratore per lo stesso codice corso. */
 export function sessioniGiaDichiarate(altre: readonly Richiesta[], codiceCorso: string): number {
+  if (!codiceCorso) return 0;
   return arrotonda2(
     altre
-      .filter((r) => r.codiceCorso === codiceCorso && !ESCLUSI_DAI_CONTROLLI.has(r.stato))
+      .filter((r) => r.tipologia === 'Formazione' && r.codiceCorso === codiceCorso && !ESCLUSI_DAI_CONTROLLI.has(r.stato))
       .reduce((s, r) => s + r.durataSessione, 0),
   );
 }
 
-/** Richieste che sarebbero duplicate (stesso lavoratore, stesso corso, stessa data). R7 */
+/** Richieste di formazione che sarebbero duplicate (stesso lavoratore, stesso corso, stessa data). R7 */
 export function trovaDuplicati(
-  rif: { login: string; codiceCorso: string; dataSessione: DataISO; id?: string },
+  rif: { login: string; codiceCorso: string; dataSessione: DataISO; id?: string; tipologia?: Tipologia },
   richieste: readonly Richiesta[],
 ): Richiesta[] {
+  if ((rif.tipologia ?? 'Formazione') !== 'Formazione' || !rif.codiceCorso) return [];
   return richieste.filter(
     (r) =>
       r.id !== rif.id &&
+      r.tipologia === 'Formazione' &&
       r.login === rif.login &&
       r.codiceCorso === rif.codiceCorso &&
       r.dataSessione === rif.dataSessione &&
       r.stato !== 'Bozza' &&
       !ESCLUSI_DAI_CONTROLLI.has(r.stato),
   );
+}
+
+/** Controlla la ripartizione delle ore: valori non negativi e somma uguale alle ore frequentate. */
+function validaRipartizione(
+  ore: RipartizioneOre,
+  oreFrequentate: number | null,
+  campi: { retribuite: string; gettone: string; nonRetribuite: string },
+  /** `true`: la somma deve essere uguale; `false` (bozza): basta che non superi. */
+  uguale: boolean,
+  err: (campo: string, messaggio: string) => void,
+): void {
+  let valide = true;
+  for (const [k, etichetta] of [['retribuite', 'retribuite'], ['gettone', 'gettone'], ['nonRetribuite', 'da non retribuire']] as const) {
+    if (!numeroValido(ore[k]) || ore[k] < 0) {
+      err(campi[k], `Le ore ${etichetta} non possono essere negative.`);
+      valide = false;
+    }
+  }
+  if (!valide || oreFrequentate === null || oreFrequentate <= 0) return;
+  const somma = arrotonda2(ore.retribuite + ore.gettone + ore.nonRetribuite);
+  if (somma > oreFrequentate + TOLLERANZA) {
+    err(campi.retribuite, `Le ore indicate (${somma}) superano le ore frequentate (${oreFrequentate}).`);
+  } else if (uguale && somma < oreFrequentate - TOLLERANZA) {
+    err(
+      campi.retribuite,
+      `Devi ripartire tutte le ore frequentate (${oreFrequentate}) tra retribuite, gettone e da non retribuire: ne mancano ${arrotonda2(oreFrequentate - somma)}.`,
+    );
+  }
 }
 
 /**
@@ -104,34 +186,34 @@ export function trovaDuplicati(
 export function validaRichiesta(input: DatiRichiestaInput, ctx: ContestoValidazione, perInvio: boolean): ErroreValidazione[] {
   const errori: ErroreValidazione[] = [];
   const err = (campo: string, messaggio: string) => errori.push({ campo, messaggio });
+  const permesso = input.tipologia !== 'Formazione';
 
-  // --- Corso
-  if (input.ente !== 'Datore di lavoro' && input.ente !== 'Committente o altro soggetto') {
-    err('ente', "Indica l'ente erogatore.");
-  }
+  // --- Corso (solo formazione)
   let durataCorso: number | null = null;
   let codiceCorso: string | null = null;
   let gettonePrevisto = true;
-  if (input.ente === 'Datore di lavoro') {
-    if (!ctx.corso) {
-      err('corsoId', 'Seleziona il corso dal catalogo.');
-    } else if (ctx.corso.ente !== 'Datore di lavoro' || !ctx.corso.attivo || ctx.corso.statoValidazione !== 'Validato') {
-      err('corsoId', 'Il corso selezionato non è più disponibile a catalogo.');
-    } else {
-      durataCorso = ctx.corso.durataOre;
-      codiceCorso = ctx.corso.codice;
-      gettonePrevisto = ctx.corso.gettonePrevisto;
-    }
-  } else if (input.ente === 'Committente o altro soggetto') {
-    if (ctx.corso) {
+  if (!permesso) {
+    if (input.ente !== 'Datore di lavoro' && input.ente !== 'Committente o altro soggetto') {
+      err('corsoId', 'Scegli il corso dal catalogo oppure indica che è un corso di un altro ente.');
+    } else if (input.ente === 'Datore di lavoro') {
+      if (!ctx.corso) {
+        err('corsoId', 'Seleziona il corso dal catalogo.');
+      } else if (ctx.corso.ente !== 'Datore di lavoro' || !ctx.corso.attivo || ctx.corso.statoValidazione !== 'Validato') {
+        err('corsoId', 'Il corso selezionato non è più disponibile a catalogo.');
+      } else {
+        durataCorso = ctx.corso.durataOre;
+        codiceCorso = ctx.corso.codice;
+        gettonePrevisto = ctx.corso.gettonePrevisto;
+      }
+    } else if (ctx.corso) {
       if (ctx.corso.ente !== 'Committente o altro soggetto' || ctx.corso.loginAutore !== ctx.login || !ctx.corso.attivo) {
-        err('corsoId', 'Il corso selezionato non è nel tuo storico.');
+        err('corsoId', 'Il corso selezionato non è tra quelli che hai già inserito.');
       } else {
         durataCorso = ctx.corso.durataOre;
         codiceCorso = ctx.corso.codice;
       }
     } else if (!input.nuovoCorso) {
-      err('corsoId', 'Indica il titolo del corso oppure selezionalo dallo storico.');
+      err('corsoId', 'Indica il titolo del corso oppure scegli un corso che hai già inserito.');
     } else {
       const nc = input.nuovoCorso;
       if (!nc.titolo || nc.titolo.trim().length < 3) err('nuovoCorso.titolo', 'Inserisci il titolo del corso (almeno 3 caratteri).');
@@ -139,57 +221,94 @@ export function validaRichiesta(input: DatiRichiestaInput, ctx: ContestoValidazi
       if (!numeroValido(nc.durataOre) || nc.durataOre <= 0) err('nuovoCorso.durataOre', 'Indica la durata complessiva del corso in ore.');
       else durataCorso = nc.durataOre;
     }
+  } else if (!input.descrizioneAttivita || input.descrizioneAttivita.trim().length < 3) {
+    err('descrizioneAttivita', 'Descrivi l’attività svolta (es. esame, lezione, tirocinio).');
   }
 
   // --- Data (R9, R12)
+  let dataValida = false;
   if (!isDataValida(input.dataSessione)) {
-    err('dataSessione', 'Indica la data della sessione formativa.');
+    err('dataSessione', permesso ? 'Indica la data del permesso.' : 'Indica la data della sessione formativa.');
   } else {
-    if (input.dataSessione > ctx.oggi) err('dataSessione', 'La data della sessione non può essere nel futuro.');
+    dataValida = true;
+    if (input.dataSessione > ctx.oggi) err('dataSessione', 'La data non può essere nel futuro.');
     const { anno, mese } = periodoDiData(input.dataSessione);
-    if (ctx.meseChiuso(anno, mese)) err('dataSessione', 'Il mese della sessione è già chiuso: rivolgiti all’Ufficio HR/Formazione.');
+    if (ctx.meseChiuso(anno, mese)) err('dataSessione', 'Il mese indicato è già chiuso: rivolgiti all’Ufficio HR/Formazione.');
   }
 
-  // --- Orari (R1, R2)
+  // --- Orari (R1)
   const campiOra = ['oraInizioSessione', 'oraFineSessione', 'oraIngresso', 'oraUscita'] as const;
+  let orariValidi = true;
   for (const c of campiOra) {
-    if (!isOrarioValido(input[c])) err(c, 'Orario non valido (formato HH:mm).');
+    if (!isOrarioValido(input[c])) {
+      err(c, 'Orario non valido (formato HH:mm).');
+      orariValidi = false;
+    }
   }
+  const lordoSessione = orariValidi ? minuti(input.oraFineSessione) - minuti(input.oraInizioSessione) : null;
+  const lordoPresenza = orariValidi ? minuti(input.oraUscita) - minuti(input.oraIngresso) : null;
+  if (lordoSessione !== null && lordoSessione <= 0) err('oraFineSessione', "L'ora di fine deve essere successiva all'ora di inizio.");
+  if (lordoPresenza !== null && lordoPresenza <= 0) err('oraUscita', "L'ora di uscita deve essere successiva all'ora di ingresso.");
+
+  // --- Pausa (R13)
+  if (input.pausaPrevista) {
+    if (!Number.isInteger(input.pausaMinuti) || input.pausaMinuti < 5 || input.pausaMinuti > MAX_PAUSA_MINUTI) {
+      err('pausaMinuti', `Indica la durata della pausa in minuti (da 5 a ${MAX_PAUSA_MINUTI}).`);
+    } else if (lordoSessione !== null && lordoSessione > 0 && input.pausaMinuti >= lordoSessione) {
+      err('pausaMinuti', 'La pausa deve essere più breve della sessione.');
+    }
+  }
+
+  // --- Ore frequentate (R2)
   const { durataSessione, oreFrequentate } = calcolaOre(input);
-  if (durataSessione !== null && durataSessione <= 0) {
-    err('oraFineSessione', "L'ora di fine sessione deve essere successiva all'ora di inizio.");
+  const oreOk = lordoSessione !== null && lordoSessione > 0 && lordoPresenza !== null && lordoPresenza > 0;
+  if (oreOk && oreFrequentate !== null && oreFrequentate <= 0) {
+    err('pausaMinuti', 'Tolta la pausa non restano ore frequentate: controlla orari e pausa.');
   }
-  if (oreFrequentate !== null && oreFrequentate <= 0) {
-    err('oraUscita', "L'ora di uscita deve essere successiva all'ora di ingresso.");
-  }
-  if (durataSessione !== null && oreFrequentate !== null && durataSessione > 0 && oreFrequentate > durataSessione + TOLLERANZA) {
+  if (oreOk && durataSessione !== null && oreFrequentate !== null && durataSessione > 0 && oreFrequentate > durataSessione + TOLLERANZA) {
     err('oraUscita', `Le ore frequentate (${oreFrequentate}) non possono superare la durata della sessione (${durataSessione}).`);
   }
 
-  // --- Ore richieste (R3, R5)
-  const ret = input.oreRetribuiteRichieste;
-  const get = input.oreGettoneRichieste;
-  if (!numeroValido(ret) || ret < 0) err('oreRetribuiteRichieste', 'Le ore retribuite non possono essere negative.');
-  if (!numeroValido(get) || get < 0) err('oreGettoneRichieste', 'Le ore gettone non possono essere negative.');
-  if (!gettonePrevisto && numeroValido(get) && get > 0) {
-    err('oreGettoneRichieste', 'Per questo corso il gettone non è previsto.');
-  }
-  if (numeroValido(ret) && numeroValido(get) && oreFrequentate !== null && oreFrequentate > 0 && ret + get > oreFrequentate + TOLLERANZA) {
-    err('oreRetribuiteRichieste', `Le ore richieste (${arrotonda2(ret + get)}) non possono superare le ore frequentate (${oreFrequentate}).`);
-  }
+  if (!permesso) {
+    // --- Ripartizione delle ore (R3, R5): tutte le ore frequentate vanno ripartite
+    if (!gettonePrevisto && numeroValido(input.oreGettoneRichieste) && input.oreGettoneRichieste > 0) {
+      err('oreGettoneRichieste', 'Per questo corso il gettone non è previsto.');
+    }
+    validaRipartizione(
+      { retribuite: input.oreRetribuiteRichieste, gettone: input.oreGettoneRichieste, nonRetribuite: input.oreNonRetribuiteRichieste },
+      oreOk ? oreFrequentate : null,
+      { retribuite: 'oreRetribuiteRichieste', gettone: 'oreGettoneRichieste', nonRetribuite: 'oreNonRetribuiteRichieste' },
+      perInvio,
+      err,
+    );
 
-  // --- Durata complessiva del corso (R6)
-  if (durataSessione !== null && durataSessione > 0 && durataCorso !== null) {
-    if (durataSessione > durataCorso + TOLLERANZA) {
-      err('oraFineSessione', `La sessione (${durataSessione} h) supera la durata complessiva del corso (${durataCorso} h).`);
-    } else if (codiceCorso) {
-      const gia = sessioniGiaDichiarate(ctx.altreRichieste, codiceCorso);
-      if (gia + durataSessione > durataCorso + TOLLERANZA) {
-        err(
-          'oraFineSessione',
-          `Con questa sessione le ore del corso diventano ${arrotonda2(gia + durataSessione)}, oltre la durata complessiva di ${durataCorso} h.`,
-        );
+    // --- Durata complessiva del corso (R6)
+    if (oreOk && durataSessione !== null && durataSessione > 0 && durataCorso !== null) {
+      if (durataSessione > durataCorso + TOLLERANZA) {
+        err('oraFineSessione', `La sessione (${durataSessione} h) supera la durata complessiva del corso (${durataCorso} h).`);
+      } else if (codiceCorso) {
+        const gia = sessioniGiaDichiarate(ctx.altreRichieste, codiceCorso);
+        if (gia + durataSessione > durataCorso + TOLLERANZA) {
+          err(
+            'oraFineSessione',
+            `Con questa sessione le ore del corso diventano ${arrotonda2(gia + durataSessione)}, oltre la durata complessiva di ${durataCorso} h.`,
+          );
+        }
       }
+    }
+  } else {
+    // --- Monte ore del permesso (R14): le ore si scalano e, a monte ore esaurito, la richiesta è bloccata
+    if (ctx.monteOre === null || ctx.monteOre === undefined) {
+      err('tipologia', `Non hai un monte ore attivo per "${input.tipologia}": rivolgiti all’Ufficio HR/Formazione.`);
+    } else if (dataValida && (input.dataSessione < ctx.monteOre.validoDal || input.dataSessione > ctx.monteOre.validoAl)) {
+      err('dataSessione', 'La data è fuori dal periodo di validità del tuo monte ore.');
+    } else if (oreOk && oreFrequentate !== null && oreFrequentate > ctx.monteOre.oreResidue + TOLLERANZA) {
+      err(
+        'oraFineSessione',
+        ctx.monteOre.oreResidue <= 0
+          ? 'Il tuo monte ore è esaurito: non puoi richiedere altre ore.'
+          : `Stai chiedendo ${oreFrequentate} ore ma nel tuo monte ore ne restano ${arrotonda2(ctx.monteOre.oreResidue)}.`,
+      );
     }
   }
 
@@ -197,8 +316,7 @@ export function validaRichiesta(input: DatiRichiestaInput, ctx: ContestoValidazi
 
   // --- Controlli aggiuntivi per l'invio (R11)
   if (perInvio) {
-    if (numeroValido(ret) && numeroValido(get) && ret + get <= 0) err('oreRetribuiteRichieste', 'Indica le ore retribuite o le ore gettone richieste.');
-    if (!input.dichiarazioni.partecipazione) err('dichiarazioni.partecipazione', 'Conferma la partecipazione al corso.');
+    if (!input.dichiarazioni.partecipazione) err('dichiarazioni.partecipazione', permesso ? 'Conferma di aver usufruito del permesso.' : 'Conferma la partecipazione al corso.');
     if (!input.dichiarazioni.correttezza) err('dichiarazioni.correttezza', 'Conferma la correttezza dei dati.');
     if (!input.dichiarazioni.autorizzazione) err('dichiarazioni.autorizzazione', "Autorizza l'invio della richiesta.");
     if (!ctx.coordinatoreLogin) err('coordinatore', "Non hai un coordinatore assegnato: segnala la variazione all'Ufficio HR/Formazione.");
@@ -209,28 +327,61 @@ export function validaRichiesta(input: DatiRichiestaInput, ctx: ContestoValidazi
 
 export type EsitoDecisione = 'approva' | 'respingi' | 'integrazione';
 
-/** Controlli sulla decisione di coordinatore o HR (R4 e motivazione obbligatoria). */
+export interface OpzioniDecisione {
+  /** Falso se il corso a catalogo non prevede il gettone. */
+  gettonePrevisto?: boolean;
+  /** Per i permessi: ore ancora disponibili nel monte ore, senza contare questa richiesta. */
+  oreResidueMonteOre?: number;
+}
+
+/**
+ * Controlli sulla decisione di coordinatore o HR (R4 e motivazione obbligatoria).
+ * In approvazione le tre voci devono sommare esattamente alle ore frequentate.
+ * Per i permessi: `retribuite` = ore di permesso riconosciute, `nonRetribuite` = ore non riconosciute.
+ */
 export function validaDecisione(
   esito: EsitoDecisione,
-  oreRetribuite: number,
-  oreGettone: number,
+  ore: RipartizioneOre,
   oreFrequentate: number,
   nota: string | undefined,
+  opzioni: OpzioniDecisione = {},
 ): ErroreValidazione[] {
   const errori: ErroreValidazione[] = [];
+  const err = (campo: string, messaggio: string) => errori.push({ campo, messaggio });
   if (esito === 'approva') {
-    if (!numeroValido(oreRetribuite) || oreRetribuite < 0) errori.push({ campo: 'oreRetribuite', messaggio: 'Le ore retribuite non possono essere negative.' });
-    if (!numeroValido(oreGettone) || oreGettone < 0) errori.push({ campo: 'oreGettone', messaggio: 'Le ore gettone non possono essere negative.' });
-    if (numeroValido(oreRetribuite) && numeroValido(oreGettone) && oreRetribuite + oreGettone > oreFrequentate + TOLLERANZA) {
-      errori.push({ campo: 'oreRetribuite', messaggio: `Le ore riconosciute non possono superare le ore frequentate (${oreFrequentate}).` });
+    validaRipartizione(ore, oreFrequentate, { retribuite: 'oreRetribuite', gettone: 'oreGettone', nonRetribuite: 'oreNonRetribuite' }, true, err);
+    if (opzioni.gettonePrevisto === false && numeroValido(ore.gettone) && ore.gettone > 0) err('oreGettone', 'Per questo corso il gettone non è previsto.');
+    if (opzioni.oreResidueMonteOre !== undefined) {
+      if (numeroValido(ore.gettone) && ore.gettone > 0) err('oreGettone', 'Per i permessi il gettone non è previsto.');
+      if (numeroValido(ore.retribuite) && ore.retribuite > opzioni.oreResidueMonteOre + TOLLERANZA) {
+        err('oreRetribuite', `Le ore di permesso (${ore.retribuite}) superano il monte ore residuo (${arrotonda2(opzioni.oreResidueMonteOre)}).`);
+      }
     }
   } else if (!nota || nota.trim().length < 5) {
-    errori.push({
-      campo: 'nota',
-      messaggio: esito === 'respingi' ? 'Indica la motivazione del respingimento.' : 'Indica cosa deve essere integrato o corretto.',
-    });
+    err('nota', esito === 'respingi' ? 'Indica la motivazione del respingimento.' : 'Indica cosa deve essere integrato o corretto.');
   }
-  if ((nota ?? '').length > MAX_LUNGHEZZA_NOTE) errori.push({ campo: 'nota', messaggio: `La nota non può superare ${MAX_LUNGHEZZA_NOTE} caratteri.` });
+  if ((nota ?? '').length > MAX_LUNGHEZZA_NOTE) err('nota', `La nota non può superare ${MAX_LUNGHEZZA_NOTE} caratteri.`);
+  return errori;
+}
+
+export interface CorrezioneCorsoInput {
+  titolo: string;
+  nomeEnte?: string;
+  modalita: Modalita;
+  durataOre: number;
+  piuGiornate: boolean;
+}
+
+/** Controlli sulla correzione dei dati di un corso esterno da parte di coordinatore o HR. */
+export function validaCorrezioneCorso(dati: CorrezioneCorsoInput, oreGiaDichiarate: number): ErroreValidazione[] {
+  const errori: ErroreValidazione[] = [];
+  if (!dati.titolo || dati.titolo.trim().length < 3) errori.push({ campo: 'titolo', messaggio: 'Inserisci il titolo del corso (almeno 3 caratteri).' });
+  if (!dati.modalita) errori.push({ campo: 'modalita', messaggio: 'Indica la modalità di svolgimento.' });
+  if (!numeroValido(dati.durataOre) || dati.durataOre <= 0) {
+    errori.push({ campo: 'durataOre', messaggio: 'Indica la durata complessiva del corso in ore.' });
+  } else if (dati.durataOre + TOLLERANZA < oreGiaDichiarate) {
+    errori.push({ campo: 'durataOre', messaggio: `La durata non può essere inferiore alle ore di sessione già dichiarate (${oreGiaDichiarate}).` });
+  }
   return errori;
 }
 

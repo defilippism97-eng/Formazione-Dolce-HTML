@@ -9,11 +9,11 @@ import '../../styles/lavoratore.css';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { Profilo as DatiProfilo } from '../../data/api';
 import { isCodiceFiscaleValido, isEmailValida, MAX_LUNGHEZZA_NOTE } from '../../domain';
-import { Avviso, CampoArea, CampoLettura, CampoTesto, Caricamento, ErroreCaricamento, Etichetta, Griglia, Pagina, Pulsante, Scheda } from '../components/ui';
+import { Avviso, BarraMonteOre, CampoArea, CampoLettura, CampoTesto, Caricamento, ErroreCaricamento, Etichetta, Griglia, Pagina, Pulsante, Scheda } from '../components/ui';
 import { useApp } from '../contesto';
 import * as f from '../format';
 import { useAzione, useCarica } from '../hooks';
-import { parametriQuery } from '../router';
+import { naviga, parametriQuery, ROTTE } from '../router';
 import { focusPrimoErrore } from './lavoratore/comuni';
 
 const MIN_SEGNALAZIONE = 10;
@@ -37,7 +37,7 @@ export function Profilo({ obbligatorio }: { obbligatorio?: boolean }) {
   return (
     <Pagina
       titolo={titolo}
-      sottotitolo={obbligatorio ? 'Primo accesso: bastano due dati e poi puoi iniziare.' : 'I tuoi dati per le richieste di riconoscimento delle ore di formazione.'}
+      sottotitolo={obbligatorio ? 'Primo accesso: bastano due dati e poi puoi iniziare.' : 'I tuoi dati per le richieste di riconoscimento delle ore di formazione e dei permessi.'}
     >
       {obbligatorio && (
         <Avviso tono="info" titolo="Prima di iniziare completa il profilo">
@@ -54,6 +54,7 @@ export function Profilo({ obbligatorio }: { obbligatorio?: boolean }) {
           {obbligatorio && <DatiContatto profilo={profilo} obbligatorio onSalvato={setAggiornato} />}
           <DatiOrganizzativi profilo={profilo} />
           {!obbligatorio && <DatiContatto profilo={profilo} obbligatorio={false} onSalvato={setAggiornato} />}
+          {!obbligatorio && <MieiPermessi profilo={profilo} />}
           <Segnalazioni profilo={profilo} onSalvato={setAggiornato} />
         </>
       )}
@@ -94,6 +95,56 @@ function DatiOrganizzativi({ profilo: p }: { profilo: DatiProfilo }) {
           }
         />
       </Griglia>
+    </Scheda>
+  );
+}
+
+/**
+ * Permessi con monte ore (diritto allo studio, riqualifica professionale) attivati dall'Ufficio HR
+ * per il lavoratore: la scheda compare solo se ce n'è almeno uno.
+ */
+function MieiPermessi({ profilo: p }: { profilo: DatiProfilo }) {
+  if (!p.monteOre.length) return null;
+  return (
+    <Scheda
+      titolo="I miei permessi"
+      icona="orologio"
+      azioni={
+        <Pulsante variante="secondario" piccolo icona="aggiungi" onClick={() => naviga(ROTTE.nuovaRichiesta)}>
+          Rendiconta un permesso
+        </Pulsante>
+      }
+    >
+      <p className="testo-secondario testo-piccolo">
+        L’Ufficio HR/Formazione ti ha assegnato un monte ore per questi permessi: le ore che rendiconti si scalano fino a esaurimento. Le ore «in approvazione» sono
+        quelle delle richieste inviate e non ancora validate.
+      </p>
+      <ul className="permessi-elenco">
+        {p.monteOre.map((m) => (
+          <li key={m.id} className="riquadro-monte">
+            <div className="riquadro-monte-testata">
+              <span className="testatina">{m.tipo}</span>
+              <span className="testo-secondario testo-piccolo">
+                valido dal {f.data(m.validoDal)} al {f.data(m.validoAl)}
+              </span>
+            </div>
+            <dl className="elenco-dati riquadro-monte-dati">
+              <div>
+                <dt>Monte ore assegnato</dt>
+                <dd>{f.ore(m.oreTotali)}</dd>
+              </div>
+              <div>
+                <dt>Ore residue</dt>
+                <dd className={m.oreResidue <= 0 ? 'testo-pericolo' : undefined}>
+                  <strong>{f.ore(m.oreResidue)}</strong>
+                </dd>
+              </div>
+            </dl>
+            <BarraMonteOre situazione={m} />
+            {m.oreResidue <= 0 && <p className="testo-piccolo testo-pericolo">Monte ore esaurito: non puoi richiedere altre ore per questo permesso.</p>}
+          </li>
+        ))}
+      </ul>
     </Scheda>
   );
 }

@@ -16,19 +16,19 @@ export interface InfoStato {
 }
 
 export const INFO_STATI: Record<StatoRichiesta, InfoStato> = {
-  Bozza: { stato: 'Bozza', gruppo: 'bozza', colore: '#4b4f54', sfondo: '#eceef0', descrizione: 'Salvata, non ancora inviata' },
-  'Inviata al coordinatore': { stato: 'Inviata al coordinatore', gruppo: 'attesa', colore: '#0b5cad', sfondo: '#e3effc', descrizione: 'Inviata, controlli in corso' },
-  'In attesa del coordinatore': { stato: 'In attesa del coordinatore', gruppo: 'attesa', colore: '#0b5cad', sfondo: '#e3effc', descrizione: 'Da approvare da parte del coordinatore' },
-  'Integrazione richiesta dal coordinatore': { stato: 'Integrazione richiesta dal coordinatore', gruppo: 'integrazione', colore: '#9a4a00', sfondo: '#fff1e0', descrizione: 'Il coordinatore chiede una correzione' },
-  'Respinta dal coordinatore': { stato: 'Respinta dal coordinatore', gruppo: 'respinta', colore: '#a4262c', sfondo: '#fde7e9', descrizione: 'Respinta dal coordinatore' },
-  'Approvata dal coordinatore': { stato: 'Approvata dal coordinatore', gruppo: 'approvata', colore: '#2f6b08', sfondo: '#e7f4dc', descrizione: 'Approvata dal coordinatore' },
-  'In attesa di validazione HR': { stato: 'In attesa di validazione HR', gruppo: 'attesa', colore: '#5c2e91', sfondo: '#f1eafa', descrizione: 'Da validare da parte di HR' },
-  'Integrazione richiesta da HR': { stato: 'Integrazione richiesta da HR', gruppo: 'integrazione', colore: '#9a4a00', sfondo: '#fff1e0', descrizione: 'HR chiede una correzione' },
-  'Respinta da HR': { stato: 'Respinta da HR', gruppo: 'respinta', colore: '#a4262c', sfondo: '#fde7e9', descrizione: 'Respinta da HR' },
-  'Validata da HR': { stato: 'Validata da HR', gruppo: 'approvata', colore: '#0e6b0e', sfondo: '#dff3df', descrizione: 'Ore riconosciute in via definitiva' },
-  'Inclusa nel riepilogo mensile': { stato: 'Inclusa nel riepilogo mensile', gruppo: 'chiusa', colore: '#005b70', sfondo: '#dcf1f5', descrizione: 'Mese chiuso da HR' },
-  'Inviata a Payroll': { stato: 'Inviata a Payroll', gruppo: 'chiusa', colore: '#004e8c', sfondo: '#dbe9f6', descrizione: "Trasmessa all'Ufficio Paghe" },
-  Annullata: { stato: 'Annullata', gruppo: 'annullata', colore: '#605e5c', sfondo: '#f3f2f1', descrizione: 'Annullata dal lavoratore' },
+  Bozza: { stato: 'Bozza', gruppo: 'bozza', colore: '#595959', sfondo: '#ececec', descrizione: 'Salvata, non ancora inviata' },
+  'Inviata al coordinatore': { stato: 'Inviata al coordinatore', gruppo: 'attesa', colore: '#0b76bd', sfondo: '#d0e5f4', descrizione: 'Inviata, controlli in corso' },
+  'In attesa del coordinatore': { stato: 'In attesa del coordinatore', gruppo: 'attesa', colore: '#0b76bd', sfondo: '#d0e5f4', descrizione: 'Da approvare da parte del coordinatore' },
+  'Integrazione richiesta dal coordinatore': { stato: 'Integrazione richiesta dal coordinatore', gruppo: 'integrazione', colore: '#8f4a12', sfondo: '#fff5dd', descrizione: 'Il coordinatore chiede una correzione' },
+  'Respinta dal coordinatore': { stato: 'Respinta dal coordinatore', gruppo: 'respinta', colore: '#b8203b', sfondo: '#f7dbe5', descrizione: 'Respinta dal coordinatore' },
+  'Approvata dal coordinatore': { stato: 'Approvata dal coordinatore', gruppo: 'approvata', colore: '#2f6e4a', sfondo: '#d0ded7', descrizione: 'Approvata dal coordinatore' },
+  'In attesa di validazione HR': { stato: 'In attesa di validazione HR', gruppo: 'attesa', colore: '#514c9b', sfondo: '#e6e4f3', descrizione: 'Da validare da parte di HR' },
+  'Integrazione richiesta da HR': { stato: 'Integrazione richiesta da HR', gruppo: 'integrazione', colore: '#8f4a12', sfondo: '#fff5dd', descrizione: 'HR chiede una correzione' },
+  'Respinta da HR': { stato: 'Respinta da HR', gruppo: 'respinta', colore: '#b8203b', sfondo: '#f7dbe5', descrizione: 'Respinta da HR' },
+  'Validata da HR': { stato: 'Validata da HR', gruppo: 'approvata', colore: '#1f5236', sfondo: '#d0ded7', descrizione: 'Ore riconosciute in via definitiva' },
+  'Inclusa nel riepilogo mensile': { stato: 'Inclusa nel riepilogo mensile', gruppo: 'chiusa', colore: '#00467e', sfondo: '#b2d6ed', descrizione: 'Mese chiuso da HR' },
+  'Inviata a Payroll': { stato: 'Inviata a Payroll', gruppo: 'chiusa', colore: '#00467e', sfondo: '#a1c8e7', descrizione: "Trasmessa all'Ufficio Paghe" },
+  Annullata: { stato: 'Annullata', gruppo: 'annullata', colore: '#595959', sfondo: '#ececec', descrizione: 'Annullata dal lavoratore' },
 };
 
 /** Stati in cui il lavoratore può modificare e (re)inviare la richiesta. */

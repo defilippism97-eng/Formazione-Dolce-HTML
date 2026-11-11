@@ -1,5 +1,6 @@
 /**
  * Ricerca e scelta di un corso del catalogo aziendale (i titoli non sono modificabili).
+ * È il primo passo del modulo: se il corso non è a catalogo, è un corso esterno.
  */
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { Corso } from '../../../domain';
@@ -61,7 +62,7 @@ export function SelettoreCorso({
   if (scelto) {
     return (
       <div className="campo">
-        <span className="campo-etichetta">Titolo del corso (catalogo)</span>
+        <span className="campo-etichetta">Corso scelto dal catalogo di Società Dolce</span>
         <div className="corso-scelto">
           <Icona nome="approva" />
           <div>
@@ -111,7 +112,7 @@ export function SelettoreCorso({
   return (
     <div className={`campo selettore-corso${errore ? ' campo-errore' : ''}`}>
       <label className="campo-etichetta" htmlFor={id}>
-        Titolo del corso (catalogo)<span className="obbligatorio" aria-hidden> *</span>
+        Cerca il corso nel catalogo di Società Dolce<span className="obbligatorio" aria-hidden> *</span>
       </label>
       {titoloPrecedente && (
         <span className="campo-aiuto">
@@ -156,7 +157,10 @@ export function SelettoreCorso({
           ))}
         </ul>
       ) : (
-        <p className="selettore-corso-vuoto">Nessun corso a catalogo corrisponde alla ricerca. Se il corso è stato organizzato da un altro ente, scegli «Committente o altro soggetto».</p>
+        <p className="selettore-corso-vuoto">
+          Nessun corso a catalogo corrisponde alla ricerca. Prova con un’altra parola; se il corso non è stato organizzato da Società Dolce, usa «Inserisci un corso
+          esterno» qui sotto.
+        </p>
       )}
       {errore && (
         <span className="campo-messaggio-errore" id={`${id}-errore`} role="alert">

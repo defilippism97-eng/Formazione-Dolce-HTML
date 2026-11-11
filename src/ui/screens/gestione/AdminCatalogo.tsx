@@ -152,6 +152,10 @@ export function AdminCatalogo({ anagrafiche, ricarica }: PropsSezione) {
 
   return (
     <div className="pagina">
+      <Avviso tono="info" titolo="Fase 2: catalogo sincronizzato da Zucchetti">
+        In una seconda fase il catalogo (corsi, edizioni, date e orari) sarà sincronizzato automaticamente da Zucchetti. Fino ad allora i corsi a catalogo si
+        gestiscono in questa pagina: quello che inserisci qui è ciò che i lavoratori vedono in «Inserisci formazione».
+      </Avviso>
       <Scheda titolo={`Corsi esterni inseriti dai lavoratori da validare (${esterniDaValidare.length})`} icona="valida">
         {esterniDaValidare.length === 0 ? (
           <p className="testo-secondario" style={{ margin: 0 }}>
@@ -201,8 +205,8 @@ export function AdminCatalogo({ anagrafiche, ricarica }: PropsSezione) {
 
       <div className="riga-flessibile">
         <p className="testo-secondario" style={{ margin: 0, flex: '1 1 320px' }}>
-          I corsi del <strong>Datore di lavoro</strong> attivi e validati compaiono nel modulo di richiesta; i corsi esterni restano nello storico del lavoratore che li
-          ha inseriti.
+          I corsi del <strong>Datore di lavoro</strong> attivi e validati compaiono nel modulo di richiesta; i corsi esterni restano tra quelli già inseriti dal
+          lavoratore. Titolo e dati di un corso esterno possono essere corretti anche dal coordinatore o da HR, dal dettaglio della richiesta, prima di approvarla.
         </p>
         <Pulsante icona="aggiungi" onClick={() => setInModifica('nuovo')}>
           Nuovo corso

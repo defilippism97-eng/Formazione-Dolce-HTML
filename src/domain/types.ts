@@ -21,6 +21,13 @@ export const ENTI = ['Datore di lavoro', 'Committente o altro soggetto'] as cons
 /** Datore di lavoro = corso interno a catalogo; Committente o altro soggetto = corso esterno. */
 export type EnteErogatore = (typeof ENTI)[number];
 
+/** Cosa viene rendicontato: formazione oppure un permesso con monte ore individuale. */
+export const TIPOLOGIE = ['Formazione', 'Diritto allo studio', 'Riqualifica professionale'] as const;
+export type Tipologia = (typeof TIPOLOGIE)[number];
+/** Permessi attivati da HR al singolo lavoratore, con un monte ore da cui scalare. */
+export type TipoPermesso = Exclude<Tipologia, 'Formazione'>;
+export const TIPI_PERMESSO: readonly TipoPermesso[] = ['Diritto allo studio', 'Riqualifica professionale'];
+
 export type StatoLavoratore = 'Attivo' | 'Non attivo';
 export type OrigineCorso = 'Catalogo aziendale' | 'Inserito dal lavoratore';
 export type StatoValidazioneCorso = 'Da validare' | 'Validato' | 'Scartato';
@@ -76,6 +83,9 @@ export interface SegnalazioneVariazione {
   testo: string;
   data: IstanteISO;
   aperta: boolean;
+  /** Chi ha fatto la segnalazione: il lavoratore stesso oppure il suo coordinatore. */
+  autoreLogin?: string;
+  autoreNome?: string;
   gestitaDa?: string;
   gestitaIl?: IstanteISO;
 }
@@ -117,6 +127,34 @@ export interface Corso {
   loginAutore?: string;
 }
 
+/**
+ * Monte ore di un permesso (diritto allo studio o riqualifica professionale) assegnato da HR
+ * a un lavoratore per un periodo: le ore dei permessi richiesti si scalano fino a esaurimento.
+ */
+export interface MonteOre {
+  id: string;
+  lavoratoreId: string;
+  tipo: TipoPermesso;
+  oreTotali: number;
+  /** Periodo di validità (anno solare, anno accademico o altro: lo decide HR). */
+  validoDal: DataISO;
+  validoAl: DataISO;
+  attivo: boolean;
+  note?: string;
+  assegnatoDa: string;
+  assegnatoIl: IstanteISO;
+}
+
+/** Monte ore con i consumi calcolati dalle richieste. */
+export interface SituazioneMonteOre extends MonteOre {
+  nominativo: string;
+  /** Ore di permessi validati da HR. */
+  oreUsufruite: number;
+  /** Ore di permessi inviati e non ancora validati (in attesa di coordinatore o HR). */
+  oreImpegnate: number;
+  oreResidue: number;
+}
+
 export interface Allegato {
   id: string;
   tipo: TipoAllegato;
@@ -153,6 +191,10 @@ export interface Richiesta {
   id: string;
   /** Numero leggibile, es. RF-2026-000123. */
   numero: string;
+  tipologia: Tipologia;
+  /** Solo per i permessi: monte ore da cui si scalano le ore e descrizione dell'attività. */
+  monteOreId?: string;
+  descrizioneAttivita?: string;
   // --- Lavoratore (copia al momento della richiesta: conserva lo storico organizzativo)
   lavoratoreId: string;
   login: string;
@@ -166,31 +208,42 @@ export interface Richiesta {
   strutturaId: string;
   coordinatoreLogin?: string;
   coordinatoreNome?: string;
-  // --- Corso
+  // --- Corso (campi vuoti per i permessi)
   corsoId?: string;
   codiceCorso: string;
   titoloCorso: string;
   /** Valorizzato solo per i corsi non presenti a catalogo. */
   titoloCorsoLibero?: string;
   durataCorso: number;
-  ente: EnteErogatore;
-  modalita: Modalita;
+  ente?: EnteErogatore;
+  modalita?: Modalita;
   piuGiornate: boolean;
   // --- Sessione e presenza
   dataSessione: DataISO;
   oraInizioSessione: Orario;
   oraFineSessione: Orario;
+  /** Pausa durante la sessione (es. pausa pranzo): non conta come formazione. */
+  pausaPrevista: boolean;
+  pausaMinuti: number;
+  /** La pausa cade dentro l'orario di presenza del lavoratore (falso se è uscito prima o entrato dopo). */
+  pausaInPresenza: boolean;
+  /** Durata della sessione al netto della pausa. */
   durataSessione: number;
   oraIngresso: Orario;
   oraUscita: Orario;
+  /** Ore di presenza al netto della pausa. */
   oreFrequentate: number;
-  // --- Ore
+  // --- Ore: la somma di retribuite + gettone + non retribuite è uguale alle ore frequentate.
+  //     Per i permessi le "retribuite" sono le ore di permesso a carico del monte ore.
   oreRetribuiteRichieste: number;
   oreGettoneRichieste: number;
+  oreNonRetribuiteRichieste: number;
   oreRetribuiteCoord?: number;
   oreGettoneCoord?: number;
+  oreNonRetribuiteCoord?: number;
   oreRetribuiteHR?: number;
   oreGettoneHR?: number;
+  oreNonRetribuiteHR?: number;
   // --- Allegati e note
   allegati: Allegato[];
   noteLavoratore?: string;
@@ -224,6 +277,8 @@ export interface FilePaghe {
   righe: number;
   totaleOreRetribuite: number;
   totaleOreGettone: number;
+  totaleOreNonRetribuite: number;
+  totaleOrePermessi: number;
   contenuto: string;
 }
 
@@ -243,6 +298,9 @@ export interface ChiusuraMensile {
   numeroRichieste: number;
   totaleOreRiconosciute: number;
   totaleGettoni: number;
+  totaleOreNonRetribuite: number;
+  /** Ore di diritto allo studio e riqualifica professionale. */
+  totaleOrePermessi: number;
   filePaghe: FilePaghe[];
   noteHR?: string;
   riaperture: Riapertura[];
@@ -256,7 +314,7 @@ export interface VoceRegistro {
   autore: string;
   ruolo: RuoloRegistro;
   azione: string;
-  entita: 'Richiesta' | 'Lavoratore' | 'Struttura' | 'Corso' | 'Ruolo' | 'Chiusura';
+  entita: 'Richiesta' | 'Lavoratore' | 'Struttura' | 'Corso' | 'Ruolo' | 'Chiusura' | 'Monte ore';
   entitaId: string;
   richiestaId?: string;
   campo?: string;

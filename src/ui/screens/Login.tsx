@@ -5,6 +5,7 @@
  * non chiede né riceve mai la password aziendale.
  */
 import { useEffect, useState, type FormEvent } from 'react';
+import logo from '../../assets/logo-societa-dolce.png';
 import { config } from '../../config';
 import type { Backend } from '../../data/api';
 import type { Sessione } from '../../domain';
@@ -47,15 +48,21 @@ export function Login({ backend, onAccesso, errore: erroreIniziale }: { backend:
   return (
     <div className="accesso">
       <div className="accesso-marchio">
-        <span className="marchio-logo" aria-hidden style={{ width: 56, height: 56, fontSize: 22 }}>
-          SD
-        </span>
+        <img className="accesso-logo" src={logo} alt={config.nomeAzienda} />
         <h1>{config.nomeApp}</h1>
         <p>
-          Rilevazione, approvazione e rendicontazione delle ore di formazione di {config.nomeAzienda}: dalla richiesta del lavoratore
-          all’approvazione del coordinatore, fino alla validazione HR e al file per l’Ufficio Paghe.
+          Rilevazione, approvazione e rendicontazione delle ore di formazione e dei permessi per studio e riqualifica: dalla richiesta del
+          lavoratore all’approvazione del coordinatore, fino alla validazione HR e al file per l’Ufficio Paghe.
         </p>
-        <p className="testo-piccolo" style={{ opacity: 0.85 }}>
+        <div className="accesso-percorso" aria-label="Il percorso di una richiesta">
+          {['Lavoratore', 'Coordinatore', 'Ufficio HR', 'Ufficio Paghe'].map((passo, i) => (
+            <div key={passo}>
+              <b>{String(i + 1).padStart(2, '0')}</b>
+              <span>{passo}</span>
+            </div>
+          ))}
+        </div>
+        <p className="accesso-nota">
           <Icona nome="lucchetto" dimensione={14} /> Accesso con l’account Microsoft 365 aziendale.
         </p>
       </div>
@@ -114,7 +121,7 @@ export function Login({ backend, onAccesso, errore: erroreIniziale }: { backend:
             </p>
           </form>
         ) : (
-          <div style={{ width: 'min(440px, 100%)', display: 'grid', gap: 14 }}>
+          <div className="accesso-riquadro">
             <h2>Accedi</h2>
             <p>Usa il tuo account Microsoft 365 aziendale (lo stesso della intranet).</p>
             {errore && <Avviso tono="pericolo">{errore}</Avviso>}

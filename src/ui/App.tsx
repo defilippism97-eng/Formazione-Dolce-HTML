@@ -3,6 +3,7 @@
  * per ruolo e instradamento delle schermate.
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import logo from '../assets/logo-societa-dolce.png';
 import { config } from '../config';
 import type { Backend } from '../data/api';
 import { ETICHETTA_RUOLO, ruoloPrincipale, type Ruolo, type Sessione } from '../domain';
@@ -16,6 +17,7 @@ import { Dettaglio } from './screens/Dettaglio';
 import { Home } from './screens/Home';
 import { Login } from './screens/Login';
 import { MieRichieste } from './screens/MieRichieste';
+import { Permessi } from './screens/Permessi';
 import { ModuloRichiesta } from './screens/ModuloRichiesta';
 import { Posta } from './screens/Posta';
 import { Profilo } from './screens/Profilo';
@@ -36,6 +38,7 @@ export const MENU: VoceMenu[] = [
   { percorso: ROTTE.mieRichieste, etichetta: 'Le mie richieste', icona: 'lista', ruoli: ['lavoratore'] },
   { percorso: ROTTE.team, etichetta: 'Richieste del team', icona: 'team', ruoli: ['coordinatore'] },
   { percorso: ROTTE.validazione, etichetta: 'Validazione HR', icona: 'valida', ruoli: ['hr', 'admin'] },
+  { percorso: ROTTE.permessi, etichetta: 'Monte ore permessi', icona: 'orologio', ruoli: ['hr', 'admin'] },
   { percorso: ROTTE.riepilogo, etichetta: 'Riepilogo mensile', icona: 'grafico', ruoli: ['coordinatore', 'hr', 'admin'] },
   { percorso: ROTTE.chiusura, etichetta: 'Chiusura e file paghe', icona: 'calendario', ruoli: ['hr', 'admin'] },
   { percorso: ROTTE.amministrazione(), etichetta: 'Amministrazione', icona: 'impostazioni', ruoli: ['admin'] },
@@ -111,10 +114,11 @@ function Struttura() {
           <Icona nome={menuAperto ? 'chiudi' : 'menu'} dimensione={22} />
         </button>
         <div className="intestazione-marchio">
-          <span className="marchio-logo" aria-hidden>SD</span>
+          <img className="marchio-logo" src={logo} alt={config.nomeAzienda} />
+          <span className="marchio-divisore" aria-hidden />
           <span className="marchio-testo">
             <strong>{config.nomeApp}</strong>
-            <small>{config.nomeAzienda}</small>
+            <small>Rilevazione, approvazione e rendicontazione delle ore</small>
           </span>
         </div>
         {backend.modalita === 'demo' && (
@@ -202,6 +206,7 @@ function Instradamento({ percorso }: { percorso: string }) {
   if (percorso === ROTTE.validazione) return <Protetta ruoli={['hr', 'admin']}><ValidazioneHR /></Protetta>;
   if (percorso === ROTTE.riepilogo) return <Protetta ruoli={['coordinatore', 'hr', 'admin']}><Riepilogo /></Protetta>;
   if (percorso === ROTTE.chiusura) return <Protetta ruoli={['hr', 'admin']}><Chiusura /></Protetta>;
+  if (percorso === ROTTE.permessi) return <Protetta ruoli={['hr', 'admin']}><Permessi /></Protetta>;
   if ((p = corrisponde(percorso, '/amministrazione/:sezione'))) return <Protetta ruoli={['admin']}><Amministrazione sezione={p.sezione!} /></Protetta>;
   if (percorso === ROTTE.posta) return <Posta />;
   return (

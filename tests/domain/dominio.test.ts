@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   azioniConsentite,
   calcolaKPI,
+  calcolaOre,
   carattereControlloCF,
+  consumoMonteOre,
   festivitaItaliane,
   generaCsvPaghe,
   giorniLavorativiTrascorsi,
@@ -12,6 +14,7 @@ import {
   puoVedereRichiesta,
   statoDopo,
   trovaDuplicati,
+  validaCorrezioneCorso,
   validaDecisione,
   validaRichiesta,
   valutaPromemoria,
@@ -28,11 +31,15 @@ const corsoCatalogo: Corso = {
 };
 
 const input = (x: Partial<DatiRichiestaInput> = {}): DatiRichiestaInput => ({
-  ente: 'Datore di lavoro', corsoId: 'c1', dataSessione: '2026-10-14',
+  tipologia: 'Formazione', ente: 'Datore di lavoro', corsoId: 'c1', dataSessione: '2026-10-14',
   oraInizioSessione: '09:00', oraFineSessione: '13:00', oraIngresso: '09:00', oraUscita: '12:30',
-  oreRetribuiteRichieste: 3.5, oreGettoneRichieste: 0,
+  pausaPrevista: false, pausaMinuti: 0, pausaInPresenza: true,
+  oreRetribuiteRichieste: 3.5, oreGettoneRichieste: 0, oreNonRetribuiteRichieste: 0,
   dichiarazioni: { partecipazione: true, correttezza: true, autorizzazione: true }, ...x,
 });
+
+const permesso = (x: Partial<DatiRichiestaInput> = {}): DatiRichiestaInput =>
+  input({ tipologia: 'Diritto allo studio', ente: undefined, corsoId: undefined, descrizioneAttivita: 'Esame di Pedagogia', oraUscita: '13:00', oreRetribuiteRichieste: 0, ...x });
 
 const ctx = (x: Partial<ContestoValidazione> = {}): ContestoValidazione => ({
   login: 'giulia@x', corso: corsoCatalogo, altreRichieste: [], meseChiuso: () => false,
@@ -40,7 +47,7 @@ const ctx = (x: Partial<ContestoValidazione> = {}): ContestoValidazione => ({
 });
 
 const richiesta = (x: Partial<Richiesta> = {}): Richiesta => ({
-  id: 'r1', numero: 'RF-2026-000001', lavoratoreId: 'l1', login: 'giulia@x', cognome: 'Bianchi', nome: 'Giulia',
+  id: 'r1', numero: 'RF-2026-000001', tipologia: 'Formazione', pausaPrevista: false, pausaMinuti: 0, pausaInPresenza: false, oreNonRetribuiteRichieste: 0, lavoratoreId: 'l1', login: 'giulia@x', cognome: 'Bianchi', nome: 'Giulia',
   area: 'Area Educativa', servizio: 'Nido', centroDiCosto: 'ED-1', strutturaId: 's1', coordinatoreLogin: 'marco@x',
   codiceCorso: 'PS-B-12', titoloCorso: 'Primo soccorso', durataCorso: 12, ente: 'Datore di lavoro', modalita: 'In presenza',
   piuGiornate: true, dataSessione: '2026-10-14', oraInizioSessione: '09:00', oraFineSessione: '13:00', durataSessione: 4,
@@ -87,6 +94,52 @@ describe('regole della richiesta', () => {
     const e = validaRichiesta(input({ oreRetribuiteRichieste: 3, oreGettoneRichieste: 1 }), ctx({ corso: { ...corsoCatalogo, gettonePrevisto: true } }), false);
     expect(e.some((x) => x.campo === 'oreRetribuiteRichieste')).toBe(true);
   });
+  it('R3 per l’invio le tre voci devono sommare esattamente alle ore frequentate', () => {
+    const c = ctx({ corso: { ...corsoCatalogo, gettonePrevisto: true } });
+    // 2 + 1 = 3 su 3,5 frequentate: bozza sì, invio no
+    const parziale = input({ oreRetribuiteRichieste: 2, oreGettoneRichieste: 1 });
+    expect(validaRichiesta(parziale, c, false)).toEqual([]);
+    expect(validaRichiesta(parziale, c, true).some((x) => x.messaggio.includes('ne mancano 0.5'))).toBe(true);
+    // con la terza voce (ore da non retribuire) la somma torna
+    expect(validaRichiesta(input({ oreRetribuiteRichieste: 2, oreGettoneRichieste: 1, oreNonRetribuiteRichieste: 0.5 }), c, true)).toEqual([]);
+    // sola registrazione: tutte le ore non retribuite
+    expect(validaRichiesta(input({ oreRetribuiteRichieste: 0, oreNonRetribuiteRichieste: 3.5 }), c, true)).toEqual([]);
+  });
+  it('R13 pausa: si toglie da durata della sessione e ore frequentate', () => {
+    const giornata = { oraInizioSessione: '09:00', oraFineSessione: '18:00', oraIngresso: '09:00', oraUscita: '18:00', pausaPrevista: true, pausaMinuti: 60, pausaInPresenza: true };
+    expect(calcolaOre(giornata)).toMatchObject({ durataSessione: 8, oreFrequentate: 8 });
+    // uscita prima della pausa: la pausa non si toglie dalle ore frequentate
+    expect(calcolaOre({ ...giornata, oraUscita: '11:00', pausaInPresenza: false })).toMatchObject({ durataSessione: 8, oreFrequentate: 2 });
+    // presenza uguale alla sessione: la pausa si toglie sempre
+    expect(calcolaOre({ ...giornata, pausaInPresenza: false }).oreFrequentate).toBe(8);
+    const c = ctx({ corso: { ...corsoCatalogo, durataOre: 8 } });
+    expect(validaRichiesta(input({ ...giornata, oreRetribuiteRichieste: 8 }), c, true)).toEqual([]);
+    expect(validaRichiesta(input({ ...giornata, pausaMinuti: 0, oreRetribuiteRichieste: 8 }), c, false).some((x) => x.campo === 'pausaMinuti')).toBe(true);
+    expect(validaRichiesta(input({ ...giornata, pausaMinuti: 600, oreRetribuiteRichieste: 8 }), c, false).some((x) => x.campo === 'pausaMinuti')).toBe(true);
+  });
+  it('R14 permessi: monte ore obbligatorio, periodo di validità, blocco a esaurimento', () => {
+    const monte = { oreResidue: 6, validoDal: '2026-01-01', validoAl: '2026-12-31' };
+    expect(validaRichiesta(permesso(), ctx({ corso: null, monteOre: monte }), true)).toEqual([]);
+    expect(validaRichiesta(permesso(), ctx({ corso: null, monteOre: null }), false).some((x) => x.campo === 'tipologia')).toBe(true);
+    expect(validaRichiesta(permesso(), ctx({ corso: null, monteOre: { ...monte, oreResidue: 3 } }), false).some((x) => x.messaggio.includes('ne restano 3'))).toBe(true);
+    expect(validaRichiesta(permesso(), ctx({ corso: null, monteOre: { ...monte, oreResidue: 0 } }), false).some((x) => x.messaggio.includes('esaurito'))).toBe(true);
+    expect(validaRichiesta(permesso(), ctx({ corso: null, monteOre: { ...monte, validoDal: '2026-11-01' } }), false).some((x) => x.campo === 'dataSessione')).toBe(true);
+    expect(validaRichiesta(permesso({ descrizioneAttivita: '' }), ctx({ corso: null, monteOre: monte }), false).some((x) => x.campo === 'descrizioneAttivita')).toBe(true);
+  });
+  it('monte ore: usufruite, impegnate e residue', () => {
+    const m = { id: 'mo1', oreTotali: 40 };
+    const p = (x: Partial<Richiesta>) => richiesta({ tipologia: 'Diritto allo studio', monteOreId: 'mo1', codiceCorso: '', ...x });
+    const richieste = [
+      p({ id: 'a', stato: 'Inviata a Payroll', oreRetribuiteRichieste: 8, oreRetribuiteCoord: 8, oreRetribuiteHR: 6 }),
+      p({ id: 'b', stato: 'In attesa di validazione HR', oreRetribuiteRichieste: 4, oreRetribuiteCoord: 3 }),
+      p({ id: 'c', stato: 'In attesa del coordinatore', oreRetribuiteRichieste: 4 }),
+      p({ id: 'd', stato: 'Respinta da HR', oreRetribuiteRichieste: 8 }),
+      p({ id: 'e', stato: 'Bozza', oreRetribuiteRichieste: 8 }),
+      richiesta({ id: 'f', monteOreId: 'altro' }),
+    ];
+    expect(consumoMonteOre(m, richieste)).toEqual({ oreUsufruite: 6, oreImpegnate: 7, oreResidue: 27 });
+    expect(consumoMonteOre(m, richieste, 'c').oreResidue).toBe(31);
+  });
   it('R5 gettone non previsto', () => {
     const e = validaRichiesta(input({ oreRetribuiteRichieste: 2.5, oreGettoneRichieste: 1 }), ctx(), false);
     expect(e.some((x) => x.campo === 'oreGettoneRichieste')).toBe(true);
@@ -124,11 +177,24 @@ describe('regole della richiesta', () => {
     const tutte = [richiesta({ id: 'a' }), richiesta({ id: 'b', stato: 'Annullata' }), richiesta({ id: 'c', stato: 'Bozza' })];
     expect(trovaDuplicati({ login: 'giulia@x', codiceCorso: 'PS-B-12', dataSessione: '2026-10-14', id: 'nuova' }, tutte).map((r) => r.id)).toEqual(['a']);
   });
-  it('R4 ore riconosciute e motivazione obbligatoria', () => {
-    expect(validaDecisione('approva', 3, 2, 4, '')).toHaveLength(1);
-    expect(validaDecisione('approva', 4, 0, 4, '')).toEqual([]);
-    expect(validaDecisione('respingi', 0, 0, 4, '')).toHaveLength(1);
-    expect(validaDecisione('integrazione', 0, 0, 4, 'Allega attestato')).toEqual([]);
+  it('R4 ore riconosciute: somma uguale alle frequentate; motivazione obbligatoria', () => {
+    const ore = (retribuite: number, gettone: number, nonRetribuite: number) => ({ retribuite, gettone, nonRetribuite });
+    expect(validaDecisione('approva', ore(3, 2, 0), 4, '')).toHaveLength(1); // supera
+    expect(validaDecisione('approva', ore(3, 0, 0), 4, '')).toHaveLength(1); // manca un'ora
+    expect(validaDecisione('approva', ore(3, 0, 1), 4, '')).toEqual([]);
+    expect(validaDecisione('approva', ore(4, 0, 0), 4, '')).toEqual([]);
+    expect(validaDecisione('approva', ore(3, 1, 0), 4, '', { gettonePrevisto: false }).some((x) => x.campo === 'oreGettone')).toBe(true);
+    expect(validaDecisione('respingi', ore(0, 0, 0), 4, '')).toHaveLength(1);
+    expect(validaDecisione('integrazione', ore(0, 0, 0), 4, 'Correggi gli orari')).toEqual([]);
+    // permessi: le ore riconosciute non possono superare il monte ore residuo
+    expect(validaDecisione('approva', ore(4, 0, 0), 4, '', { oreResidueMonteOre: 3 }).some((x) => x.campo === 'oreRetribuite')).toBe(true);
+    expect(validaDecisione('approva', ore(3, 0, 1), 4, '', { oreResidueMonteOre: 3 })).toEqual([]);
+  });
+  it('correzione del corso esterno da parte del coordinatore', () => {
+    const dati = { titolo: 'Pedagogia 0-6', modalita: 'In presenza' as const, durataOre: 8, piuGiornate: true };
+    expect(validaCorrezioneCorso(dati, 8)).toEqual([]);
+    expect(validaCorrezioneCorso({ ...dati, titolo: 'x' }, 0).some((x) => x.campo === 'titolo')).toBe(true);
+    expect(validaCorrezioneCorso({ ...dati, durataOre: 4 }, 8).some((x) => x.campo === 'durataOre')).toBe(true);
   });
   it('codice fiscale', () => {
     const base = 'RSSMRA80A01A944';
@@ -161,21 +227,31 @@ describe('stati e permessi', () => {
   });
   it('mese chiuso blocca ogni modifica', () => {
     const a = azioniConsentite(sessione('giulia@x', ['lavoratore']), richiesta({ stato: 'Bozza' }), true);
-    expect(a).toEqual({ modifica: false, annulla: false, esitoCoordinatore: false, esitoHR: false });
+    expect(a).toEqual({ modifica: false, annulla: false, esitoCoordinatore: false, esitoHR: false, correzioneCorso: false });
+  });
+  it('il coordinatore può correggere solo i corsi esterni delle richieste che deve approvare', () => {
+    const coord = sessione('marco@x', ['coordinatore']);
+    expect(azioniConsentite(coord, richiesta({ ente: 'Committente o altro soggetto' }), false).correzioneCorso).toBe(true);
+    expect(azioniConsentite(coord, richiesta(), false).correzioneCorso).toBe(false);
+    expect(azioniConsentite(coord, richiesta({ ente: 'Committente o altro soggetto', stato: 'Validata da HR' }), false).correzioneCorso).toBe(false);
   });
 });
 
 describe('riepilogo, promemoria e paghe', () => {
   it('KPI con conteggio distinto dei lavoratori', () => {
     const k = calcolaKPI([
-      richiesta({ id: 'a', stato: 'Validata da HR', oreRetribuiteHR: 4, approvatoCoordIl: 'x', oreRetribuiteCoord: 4 }),
+      richiesta({ id: 'a', stato: 'Validata da HR', oreRetribuiteHR: 3, oreNonRetribuiteHR: 1, approvatoCoordIl: 'x', oreRetribuiteCoord: 4 }),
       richiesta({ id: 'b', oreFrequentate: 2 }),
       richiesta({ id: 'c', login: 'altro@x', stato: 'Annullata' }),
+      richiesta({ id: 'd', tipologia: 'Diritto allo studio', stato: 'Validata da HR', oreRetribuiteHR: 4, approvatoCoordIl: 'x', oreRetribuiteCoord: 4 }),
     ]);
     expect(k.lavoratori).toBe(1);
-    expect(k.richieste).toBe(2);
-    expect(k.oreFrequentate).toBe(6);
-    expect(k.oreRetribuiteHR).toBe(4);
+    expect(k.richieste).toBe(3);
+    expect(k.oreFrequentate).toBe(10);
+    // i permessi non entrano nelle ore retribuite della formazione
+    expect(k.oreRetribuiteHR).toBe(3);
+    expect(k.oreNonRetribuiteHR).toBe(1);
+    expect(k.orePermessiHR).toBe(4);
   });
   it('promemoria a 3 e 5 giorni, HR a 7', () => {
     const r = richiesta({ inviatoIl: '2026-10-23T17:00:00Z' }); // venerdì
@@ -185,13 +261,14 @@ describe('riepilogo, promemoria e paghe', () => {
   });
   it('CSV paghe: BOM, separatore, decimali italiani, protezione formule', () => {
     const csv = generaCsvPaghe([
-      { codiceFiscale: 'X', cognome: 'D"Amico', nome: '=SOMMA(1)', area: 'Area Centro', servizio: 'S', centroDiCosto: 'C', mese: 10, anno: 2026, titoloCorso: 'T; 1', dataCorso: '2026-10-14', oreRetribuite: 3.5, oreGettone: 0, idRichiesta: 'RF-1' },
+      { codiceFiscale: 'X', cognome: 'D"Amico', nome: '=SOMMA(1)', area: 'Area Centro', servizio: 'S', centroDiCosto: 'C', mese: 10, anno: 2026, tipologia: 'Formazione', titoloCorso: 'T; 1', dataCorso: '2026-10-14', oreRetribuite: 3.5, oreGettone: 0, oreNonRetribuite: 0.5, oreDirittoStudio: 0, oreRiqualifica: 0, idRichiesta: 'RF-1' },
     ]);
+    expect(csv.split('\r\n')[0]).toContain('Tipologia;Titolo corso;Data corso;Ore retribuite riconosciute HR;Ore gettone riconosciute HR;Ore non retribuite;Ore diritto allo studio;Ore riqualifica professionale;ID richiesta');
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     const riga = csv.split('\r\n')[1]!;
     expect(riga).toContain('"D""Amico"');
     expect(riga).toContain(`"'=SOMMA(1)"`);
     expect(riga).toContain('"T; 1"');
-    expect(riga).toContain(';14/10/2026;3,5;0;');
+    expect(riga).toContain(';14/10/2026;3,5;0;0,5;0;0;');
   });
 });

@@ -7,11 +7,6 @@ import { useApp, useMessaggi } from '../../contesto';
 import { scaricaFile } from '../../format';
 import { messaggioErrore } from '../../hooks';
 
-/** Titolo del corso da mostrare (titolo libero per i corsi esterni). */
-export function titoloCorso(r: Pick<Richiesta, 'titoloCorso' | 'titoloCorsoLibero'>): string {
-  return r.titoloCorsoLibero || r.titoloCorso;
-}
-
 /** Mese di competenza chiuso da HR. */
 export function isMeseChiuso(chiusure: readonly ChiusuraMensile[], anno: number, mese: number): boolean {
   return chiusure.some((c) => c.anno === anno && c.mese === mese && c.stato === 'Chiuso');
@@ -99,7 +94,14 @@ export const ETICHETTE_CAMPI: Record<string, string> = {
   oraUscita: 'Ora uscita',
   oreFrequentate: 'Ore frequentate',
   oreRetribuiteRichieste: 'Ore retribuite richieste',
-  oreGettoneRichieste: 'Ore gettone richieste',
+  oreGettoneRichieste: 'Ore a gettone richieste',
+  oreNonRetribuiteRichieste: 'Ore da non retribuire richieste',
+  tipologia: 'Tipologia',
+  descrizioneAttivita: 'Attività del permesso',
+  monteOreId: 'Monte ore',
+  pausaPrevista: 'Pausa prevista',
+  pausaMinuti: 'Durata della pausa (minuti)',
+  pausaInPresenza: 'Presente a cavallo della pausa',
   noteLavoratore: 'Note del lavoratore',
   corsoId: 'Corso',
   codiceCorso: 'Codice corso',

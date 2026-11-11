@@ -1,11 +1,15 @@
 /**
  * Schermata 6 – Validazione HR.
  *
- * HR consulta tutte le richieste (in modo predefinito quelle approvate dai coordinatori e in
- * attesa di validazione), può correggere le ore riconosciute direttamente in tabella e decidere:
+ * HR consulta tutte le richieste – formazione e permessi con monte ore (diritto allo studio,
+ * riqualifica professionale) – in modo predefinito quelle approvate dai coordinatori e in attesa
+ * di validazione. Può correggere le ore riconosciute direttamente in tabella e decidere:
  *  - sulle richieste selezionate (con le ore eventualmente corrette);
  *  - su un intero perimetro (coordinatore, centro di costo, servizio, area) di un mese o di un anno,
  *    con le ore riconosciute dai coordinatori.
+ * In validazione le voci devono sommare esattamente alle ore frequentate: retribuite + gettone +
+ * da non retribuire per la formazione; ore di permesso + non riconosciute per i permessi, entro
+ * il monte ore residuo del lavoratore.
  * Il backend ricontrolla ogni richiesta e restituisce quelle scartate con il motivo.
  */
 import { useCallback, useId, useMemo, useState, type ChangeEvent, type ReactNode } from 'react';
@@ -14,11 +18,16 @@ import {
   arrotonda2,
   AREE,
   IN_ATTESA_HR,
+  isPermesso,
+  orePermesso,
   STATI_RICHIESTA,
+  titoloRichiesta,
+  validaDecisione,
   type Area,
   type ChiusuraMensile,
   type EsitoDecisione,
   type FiltriRichieste,
+  type OpzioniDecisione,
   type Richiesta,
   type StatoRichiesta,
 } from '../../domain';
@@ -45,8 +54,10 @@ import * as f from '../format';
 import { useAzione, useCarica } from '../hooks';
 import { naviga, ROTTE } from '../router';
 import {
-  CoppiaOre,
+  CellaTitolo,
+  comeTipologia,
   LegendaSegnali,
+  LegendaVoci,
   meseChiusoIn,
   nominativo,
   nomeUtente,
@@ -54,12 +65,17 @@ import {
   opzioniAnni,
   opzioniDistinte,
   OPZIONI_MESI,
+  OPZIONI_TIPOLOGIA,
   oreRidotteDalCoordinatore,
   Segnali,
   segnaliRichiesta,
-  titoloCorso,
+  testoVoci,
   TOLLERANZA_ORE,
   unisciOpzioni,
+  vociCoordinatore,
+  vociHR,
+  VociOre,
+  vociRichieste,
 } from './gestione/comuni';
 import '../../styles/gestione.css';
 
@@ -68,6 +84,7 @@ const DA_VALIDARE = 'davalidare';
 const STATO_PREDEFINITO: StatoRichiesta = 'In attesa di validazione HR';
 
 interface Filtri {
+  tipologia: string;
   anno: string;
   mese: string;
   area: string;
@@ -78,7 +95,7 @@ interface Filtri {
   codiceCorso: string;
   stato: string;
 }
-const FILTRI_INIZIALI: Filtri = { anno: '', mese: '', area: '', servizio: '', centroDiCosto: '', coordinatoreLogin: '', login: '', codiceCorso: '', stato: STATO_PREDEFINITO };
+const FILTRI_INIZIALI: Filtri = { tipologia: '', anno: '', mese: '', area: '', servizio: '', centroDiCosto: '', coordinatoreLogin: '', login: '', codiceCorso: '', stato: STATO_PREDEFINITO };
 
 type TipoPerimetro = 'coordinatoreLogin' | 'centroDiCosto' | 'servizio' | 'area';
 const TIPI_PERIMETRO: { valore: TipoPerimetro; etichetta: string }[] = [
@@ -94,10 +111,18 @@ interface Perimetro {
   mese: string;
 }
 
-/** Ore HR inserite nella tabella (testo, con la virgola decimale). */
+/** Ore HR inserite nella tabella (testo, con la virgola decimale): le tre voci della ripartizione. */
 interface OreTesto {
+  /** Retribuite oppure, per i permessi, ore di permesso a carico del monte ore. */
   ret: string;
   get: string;
+  /** Da non retribuire oppure, per i permessi, ore non riconosciute. */
+  non: string;
+}
+interface OreNumeri {
+  ret: number;
+  get: number;
+  non: number;
 }
 
 interface EsitoMostrato {
@@ -117,19 +142,59 @@ const parseOre = (t: string) => {
   const v = t.trim().replace(',', '.');
   return v === '' || !/^\d+(\.\d+)?$/.test(v) ? NaN : Number(v);
 };
-const oreCoordinatore = (r: Richiesta) => ({
+/** Ore riconosciute dal coordinatore (punto di partenza della validazione HR). */
+const oreCoordinatore = (r: Richiesta): OreNumeri => ({
   ret: r.oreRetribuiteCoord ?? r.oreRetribuiteRichieste,
   get: r.oreGettoneCoord ?? r.oreGettoneRichieste,
+  non: r.oreNonRetribuiteCoord ?? r.oreNonRetribuiteRichieste,
 });
 const plurale = (n: number, uno: string, molti: string) => `${n} ${n === 1 ? uno : molti}`;
 
-/** Controllo R4: ore non negative e non superiori alle ore frequentate. */
-function erroreOre(r: Richiesta, v: OreTesto): string | null {
+/** Totali per voce di un insieme di richieste: formazione e permessi restano distinti. */
+function totaliVoci(voci: { r: Richiesta; ore: OreNumeri }[]) {
+  const somma = (sel: (o: OreNumeri) => number, quali: (r: Richiesta) => boolean) => arrotonda2(voci.filter((v) => quali(v.r)).reduce((t, v) => t + sel(v.ore), 0));
+  const formazione = (r: Richiesta) => !isPermesso(r);
+  return {
+    retribuite: somma((o) => o.ret, formazione),
+    gettone: somma((o) => o.get, formazione),
+    nonRetribuite: somma((o) => o.non, formazione),
+    permessi: somma((o) => o.ret, isPermesso),
+    permessiNonRiconosciute: somma((o) => o.non, isPermesso),
+    numeroPermessi: voci.filter((v) => isPermesso(v.r)).length,
+  };
+}
+
+/** Frase con i totali, es. "12 h retribuite, 2 h gettone, 1 h da non retribuire e 4 h di permesso". */
+function FraseTotali({ t }: { t: ReturnType<typeof totaliVoci> }) {
+  return (
+    <>
+      <strong>{f.numero(t.retribuite)} h retribuite</strong>, <strong>{f.numero(t.gettone)} h gettone</strong> e{' '}
+      <strong>{f.numero(t.nonRetribuite)} h da non retribuire</strong>
+      {t.numeroPermessi > 0 && (
+        <>
+          ; per i permessi <strong>{f.numero(t.permessi)} h scalate dal monte ore</strong>
+          {t.permessiNonRiconosciute > 0 && <> e {f.numero(t.permessiNonRiconosciute)} h non riconosciute</>}
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Controlli sulle ore inserite da HR (gli stessi del backend, con messaggi brevi per la tabella):
+ * numeri validi, somma uguale alle ore frequentate, gettone solo se previsto, monte ore residuo.
+ */
+function erroreOre(r: Richiesta, v: OreTesto, opzioni: OpzioniDecisione): string | null {
   const ret = parseOre(v.ret);
   const get = parseOre(v.get);
-  if (Number.isNaN(ret) || Number.isNaN(get)) return 'Inserisci numeri validi (es. 3,5), non negativi.';
-  if (ret + get > r.oreFrequentate + TOLLERANZA_ORE) return `Totale ${f.numero(arrotonda2(ret + get))} h oltre le ore frequentate (${f.numero(r.oreFrequentate)} h).`;
-  return null;
+  const non = parseOre(v.non);
+  if (Number.isNaN(ret) || Number.isNaN(get) || Number.isNaN(non)) return 'Inserisci numeri validi (es. 3,5), non negativi.';
+  const somma = arrotonda2(ret + get + non);
+  if (somma > r.oreFrequentate + TOLLERANZA_ORE) return `Totale ${f.numero(somma)} h: supera le ore frequentate (${f.numero(r.oreFrequentate)} h).`;
+  if (somma < r.oreFrequentate - TOLLERANZA_ORE) {
+    return `Totale ${f.numero(somma)} h: mancano ${f.numero(arrotonda2(r.oreFrequentate - somma))} h per arrivare alle ${f.numero(r.oreFrequentate)} h frequentate.`;
+  }
+  return validaDecisione('approva', { retribuite: ret, gettone: get, nonRetribuite: non }, r.oreFrequentate, undefined, opzioni)[0]?.messaggio ?? null;
 }
 
 export function ValidazioneHR() {
@@ -148,14 +213,16 @@ export function ValidazioneHR() {
   // funzione stabile: il dialogo rimette il focus sul primo campo se cambia
   const chiudiPerimetro = useCallback(() => setPerimetroAperto(false), []);
 
-  // Dati di supporto: anagrafiche (opzioni dei filtri, codici fiscali mancanti) e mesi chiusi
+  // Dati di supporto: anagrafiche (opzioni dei filtri, codici fiscali mancanti, gettone previsto dai corsi),
+  // mesi chiusi e monte ore dei permessi (per il controllo immediato sul residuo)
   const supporto = useCarica(async () => {
-    const [anagrafiche, chiusure] = await Promise.all([backend.getAnagrafiche(), backend.getChiusure()]);
-    return { anagrafiche, chiusure };
+    const [anagrafiche, chiusure, monti] = await Promise.all([backend.getAnagrafiche(), backend.getChiusure(), backend.getMontiOre()]);
+    return { anagrafiche, chiusure, monti };
   }, [backend]);
 
   const filtriApi = useMemo<FiltriRichieste>(
     () => ({
+      tipologia: comeTipologia(filtri.tipologia),
       anno: filtri.anno ? Number(filtri.anno) : undefined,
       mese: filtri.mese ? Number(filtri.mese) : undefined,
       area: (filtri.area || undefined) as Area | undefined,
@@ -173,6 +240,18 @@ export function ValidazioneHR() {
   const chiusure = supporto.dati?.chiusure;
   const anagrafiche = supporto.dati?.anagrafiche;
   const cfMancante = useMemo(() => new Set((anagrafiche?.lavoratori ?? []).filter((l) => !l.codiceFiscale).map((l) => l.id)), [anagrafiche]);
+  const corsi = useMemo(() => new Map((anagrafiche?.corsi ?? []).map((c) => [c.id, c])), [anagrafiche]);
+  const monti = useMemo(() => new Map((supporto.dati?.monti ?? []).map((m) => [m.id, m])), [supporto.dati]);
+
+  /**
+   * Opzioni dei controlli per una richiesta: gettone previsto dal corso e, per i permessi, monte ore
+   * residuo senza contare la richiesta stessa (che, essendo in attesa, è già tra le ore «in approvazione»).
+   */
+  const opzioniDi = (r: Richiesta): OpzioniDecisione => {
+    if (!isPermesso(r)) return { gettonePrevisto: r.corsoId ? corsi.get(r.corsoId)?.gettonePrevisto : undefined };
+    const m = r.monteOreId ? monti.get(r.monteOreId) : undefined;
+    return { gettonePrevisto: false, oreResidueMonteOre: m ? arrotonda2(m.oreResidue + orePermesso(r)) : undefined };
+  };
 
   const righe = useMemo(() => {
     const tutte = dati.dati ?? [];
@@ -184,12 +263,12 @@ export function ValidazioneHR() {
   const decidibile = (r: Richiesta) => IN_ATTESA_HR.has(r.stato) && !propria(r) && !meseChiuso(r);
   const valoreOre = (r: Richiesta): OreTesto => {
     const c = oreCoordinatore(r);
-    return ore[r.id] ?? { ret: testoOre(c.ret), get: testoOre(c.get) };
+    return ore[r.id] ?? { ret: testoOre(c.ret), get: testoOre(c.get), non: testoOre(c.non) };
   };
   const oreModificate = (r: Richiesta) => {
     const v = valoreOre(r);
     const c = oreCoordinatore(r);
-    return Math.abs(parseOre(v.ret) - c.ret) > TOLLERANZA_ORE || Math.abs(parseOre(v.get) - c.get) > TOLLERANZA_ORE;
+    return Math.abs(parseOre(v.ret) - c.ret) > TOLLERANZA_ORE || Math.abs(parseOre(v.get) - c.get) > TOLLERANZA_ORE || Math.abs(parseOre(v.non) - c.non) > TOLLERANZA_ORE;
   };
   const selezionate = righe.filter((r) => selezionati.has(r.id) && decidibile(r));
   const decidibiliVisibili = righe.filter(decidibile).length;
@@ -221,7 +300,7 @@ export function ValidazioneHR() {
       lavoratori: unisciOpzioni(opzioniDistinte(anagrafiche?.lavoratori ?? [], (l) => l.login, nominativo), opzioniDistinte(elenco, (r) => r.login, nominativo)),
       corsi: unisciOpzioni(
         opzioniDistinte(anagrafiche?.corsi ?? [], (c) => c.codice, (c) => `${c.codice} – ${c.titolo}`),
-        opzioniDistinte(elenco, (r) => r.codiceCorso, (r) => `${r.codiceCorso} – ${titoloCorso(r)}`),
+        opzioniDistinte(elenco, (r) => r.codiceCorso, (r) => `${r.codiceCorso} – ${titoloRichiesta(r)}`),
       ),
       stati: [
         { valore: DA_VALIDARE, etichetta: 'Da validare (tutti gli stati in attesa di HR)' },
@@ -279,24 +358,24 @@ export function ValidazioneHR() {
     const scelte = selezionate;
     if (!scelte.length) return;
     if (esitoScelto === 'approva') {
-      const errate = scelte.filter((r) => erroreOre(r, valoreOre(r)));
+      const errate = scelte.filter((r) => erroreOre(r, valoreOre(r), opzioniDi(r)));
       if (errate.length) {
         mostra('errore', `Correggi le ore di ${errate.map((r) => r.numero).join(', ')} prima di validare.`);
         return;
       }
-      const voci = scelte.map((r) => {
+      const inserite = scelte.map((r) => {
         const v = valoreOre(r);
-        return { id: r.id, oreRetribuite: parseOre(v.ret), oreGettone: parseOre(v.get) };
+        return { r, ore: { ret: parseOre(v.ret), get: parseOre(v.get), non: parseOre(v.non) } };
       });
-      const totRet = arrotonda2(voci.reduce((s, v) => s + v.oreRetribuite, 0));
-      const totGet = arrotonda2(voci.reduce((s, v) => s + v.oreGettone, 0));
+      const voci = inserite.map(({ r, ore: o }) => ({ id: r.id, oreRetribuite: o.ret, oreGettone: o.get, oreNonRetribuite: o.non }));
+      const totali = totaliVoci(inserite);
       const modificate = scelte.filter(oreModificate).length;
       const ok = await chiediConferma(
         'approva',
         scelte.length,
         <>
           <p>
-            Le ore saranno riconosciute in via definitiva: <strong>{f.numero(totRet)} h retribuite</strong> e <strong>{f.numero(totGet)} h gettone</strong>.
+            Le ore saranno riconosciute in via definitiva: <FraseTotali t={totali} />.
           </p>
           {modificate > 0 && (
             <p>
@@ -316,8 +395,7 @@ export function ValidazioneHR() {
   const decidiPerimetro = async (esitoScelto: EsitoDecisione, candidati: Richiesta[], descrizione: string) => {
     // la conferma si apre al posto del dialogo del perimetro (mai due finestre modali sovrapposte)
     setPerimetroAperto(false);
-    const totRet = arrotonda2(candidati.reduce((s, r) => s + oreCoordinatore(r).ret, 0));
-    const totGet = arrotonda2(candidati.reduce((s, r) => s + oreCoordinatore(r).get, 0));
+    const totali = totaliVoci(candidati.map((r) => ({ r, ore: oreCoordinatore(r) })));
     const ok = await chiediConferma(
       esitoScelto,
       candidati.length,
@@ -327,8 +405,7 @@ export function ValidazioneHR() {
         </p>
         {esitoScelto === 'approva' && (
           <p>
-            Saranno riconosciute le ore approvate dai coordinatori: <strong>{f.numero(totRet)} h retribuite</strong> e <strong>{f.numero(totGet)} h gettone</strong>.
-            Lavoratori e coordinatori riceveranno una notifica.
+            Saranno riconosciute le ore approvate dai coordinatori: <FraseTotali t={totali} />. Lavoratori e coordinatori riceveranno una notifica.
           </p>
         )}
       </>,
@@ -362,7 +439,7 @@ export function ValidazioneHR() {
   return (
     <Pagina
       titolo="Validazione HR"
-      sottotitolo="Richieste approvate dai coordinatori da validare. Puoi correggere le ore riconosciute nella tabella, decidere sulle richieste selezionate o su un intero perimetro."
+      sottotitolo="Richieste di formazione e di permesso approvate dai coordinatori, da validare. Puoi correggere le ore riconosciute nella tabella (le voci devono sommare alle ore frequentate), decidere sulle richieste selezionate o su un intero perimetro."
       azioni={
         <Pulsante icona="team" variante="secondario" onClick={apriPerimetro} disabled={azione.inCorso}>
           Azioni su un perimetro
@@ -370,6 +447,7 @@ export function ValidazioneHR() {
       }
     >
       <BarraFiltri onAzzera={() => setFiltri(FILTRI_INIZIALI)} conteggio={`${plurale(righe.length, 'richiesta', 'richieste')} · ${decidibiliVisibili} da decidere`}>
+        <CampoSelezione etichetta="Tipologia" value={filtri.tipologia} onChange={cambia('tipologia')} vuota="Tutte" opzioni={OPZIONI_TIPOLOGIA} />
         <CampoSelezione etichetta="Mese" value={filtri.mese} onChange={cambia('mese')} vuota="Tutti" opzioni={OPZIONI_MESI} />
         <CampoSelezione etichetta="Anno" value={filtri.anno} onChange={cambia('anno')} vuota="Tutti" opzioni={opzioni.anni} />
         <CampoSelezione etichetta="Area" value={filtri.area} onChange={cambia('area')} vuota="Tutte" opzioni={opzioni.aree} />
@@ -409,7 +487,12 @@ export function ValidazioneHR() {
         </Avviso>
       )}
 
-      {supporto.errore && <Avviso tono="avviso">Alcune informazioni di supporto non sono disponibili ({supporto.errore}): i filtri mostrano solo i valori presenti nelle richieste.</Avviso>}
+      {supporto.errore && (
+        <Avviso tono="avviso">
+          Alcune informazioni di supporto non sono disponibili ({supporto.errore}): i filtri mostrano solo i valori presenti nelle richieste e il monte ore residuo
+          dei permessi viene controllato solo al momento della validazione.
+        </Avviso>
+      )}
       {dati.errore && <ErroreCaricamento messaggio={dati.errore} onRiprova={dati.ricarica} />}
       {dati.caricamento && !dati.dati ? (
         <Caricamento />
@@ -417,7 +500,7 @@ export function ValidazioneHR() {
         dati.dati && (
           <>
             <LegendaSegnali />
-            <div className="gestione-tabella tabella-compatta">
+            <div className="gestione-tabella tabella-compatta tabella-validazione">
               <Tabella
                 didascalia="Richieste per la validazione HR"
                 righe={righe}
@@ -453,19 +536,11 @@ export function ValidazioneHR() {
                       </span>
                     ),
                   },
-                  {
-                    titolo: 'Corso',
-                    valore: (r) => (
-                      <span className="cella-titolo-corso testo-a-capo">
-                        {titoloCorso(r)}
-                        <span className="cella-secondaria">{r.codiceCorso}</span>
-                      </span>
-                    ),
-                  },
+                  { titolo: 'Tipologia e corso / attività', valore: (r) => <CellaTitolo r={r} /> },
                   { titolo: 'Data', valore: (r) => f.data(r.dataSessione) },
-                  { titolo: 'Ore svolte', valore: (r) => f.numero(r.oreFrequentate), numerica: true },
-                  { titolo: 'Ore richieste', valore: (r) => <CoppiaOre retribuite={r.oreRetribuiteRichieste} gettone={r.oreGettoneRichieste} />, numerica: true, secondaria: true },
-                  { titolo: 'Approvate coord.', valore: (r) => <CoppiaOre retribuite={r.oreRetribuiteCoord} gettone={r.oreGettoneCoord} />, numerica: true },
+                  { titolo: 'Ore frequentate', valore: (r) => f.numero(r.oreFrequentate), numerica: true },
+                  { titolo: 'Ore richieste', valore: (r) => <VociOre tipologia={r.tipologia} {...vociRichieste(r)} />, numerica: true, secondaria: true },
+                  { titolo: 'Approvate coord.', valore: (r) => <VociOre tipologia={r.tipologia} {...vociCoordinatore(r)} />, numerica: true },
                   {
                     titolo: 'Ore riconosciute HR',
                     numerica: true,
@@ -474,6 +549,7 @@ export function ValidazioneHR() {
                         <CellaOreHR
                           r={r}
                           valore={valoreOre(r)}
+                          opzioni={opzioniDi(r)}
                           modificate={oreModificate(r)}
                           onCambia={(v) => setOre((o) => ({ ...o, [r.id]: v }))}
                           onRipristina={() =>
@@ -484,7 +560,7 @@ export function ValidazioneHR() {
                           }
                         />
                       ) : (
-                        <CoppiaOre retribuite={r.oreRetribuiteHR} gettone={r.oreGettoneHR} />
+                        <VociOre tipologia={r.tipologia} {...vociHR(r)} />
                       ),
                   },
                   { titolo: 'Stato', valore: (r) => <BadgeStato stato={r.stato} /> },
@@ -492,6 +568,7 @@ export function ValidazioneHR() {
                 azioni={(r) => <PulsanteIcona icona="visualizza" etichetta={`Apri ${r.numero} (dettaglio e storico)`} onClick={() => naviga(ROTTE.dettaglio(r.id))} />}
               />
             </div>
+            {righe.length > 0 && <LegendaVoci />}
             {decidibiliVisibili > 0 && selezionate.length === 0 && (
               <p className="testo-secondario testo-piccolo">
                 Seleziona le richieste con la casella a sinistra per validarle, respingerle o chiedere un’integrazione, oppure usa «Azioni su un perimetro».
@@ -539,47 +616,95 @@ export function ValidazioneHR() {
 // ---------------------------------------------------------------------------
 //  Ore HR modificabili nella riga
 // ---------------------------------------------------------------------------
-function CellaOreHR({ r, valore, modificate, onCambia, onRipristina }: { r: Richiesta; valore: OreTesto; modificate: boolean; onCambia: (v: OreTesto) => void; onRipristina: () => void }) {
+function CellaOreHR({
+  r,
+  valore,
+  opzioni,
+  modificate,
+  onCambia,
+  onRipristina,
+}: {
+  r: Richiesta;
+  valore: OreTesto;
+  opzioni: OpzioniDecisione;
+  modificate: boolean;
+  onCambia: (v: OreTesto) => void;
+  onRipristina: () => void;
+}) {
   const id = useId();
-  const errore = erroreOre(r, valore);
+  const permesso = isPermesso(r);
+  const errore = erroreOre(r, valore, opzioni);
+  // resto da assegnare alla voce "non retribuite" / "non riconosciute" per pareggiare le ore frequentate
+  const ret = parseOre(valore.ret);
+  const get = permesso ? 0 : parseOre(valore.get);
+  const resto = Number.isNaN(ret) || Number.isNaN(get) ? NaN : arrotonda2(r.oreFrequentate - ret - get);
+  const pareggiabile = !Number.isNaN(resto) && resto >= 0 && Math.abs(resto - parseOre(valore.non)) > TOLLERANZA_ORE;
+  const gettoneNonPrevisto = !permesso && opzioni.gettonePrevisto === false;
+  const campo = (chiave: keyof OreTesto, sigla: string, descrizione: string, extra: { disabled?: boolean; title?: string } = {}) => (
+    <>
+      <label htmlFor={`${id}-${chiave}`}>{sigla}</label>
+      <input
+        id={`${id}-${chiave}`}
+        inputMode="decimal"
+        autoComplete="off"
+        value={valore[chiave]}
+        onChange={(e) => onCambia({ ...valore, [chiave]: e.target.value })}
+        aria-label={`${descrizione} per ${r.numero}`}
+        aria-invalid={errore ? true : undefined}
+        aria-describedby={errore ? `${id}-e` : undefined}
+        {...extra}
+      />
+    </>
+  );
   return (
     // i clic sui campi non devono aprire il dettaglio della riga
     <div className="ore-hr" onClick={(e) => e.stopPropagation()}>
-      <label htmlFor={`${id}-r`}>Retr.</label>
-      <input
-        id={`${id}-r`}
-        inputMode="decimal"
-        autoComplete="off"
-        value={valore.ret}
-        onChange={(e) => onCambia({ ...valore, ret: e.target.value })}
-        aria-label={`Ore retribuite riconosciute da HR per ${r.numero}`}
-        aria-invalid={errore ? true : undefined}
-        aria-describedby={errore ? `${id}-e` : undefined}
-      />
-      <label htmlFor={`${id}-g`}>Gett.</label>
-      <input
-        id={`${id}-g`}
-        inputMode="decimal"
-        autoComplete="off"
-        value={valore.get}
-        onChange={(e) => onCambia({ ...valore, get: e.target.value })}
-        aria-label={`Ore gettone riconosciute da HR per ${r.numero}`}
-        aria-invalid={errore ? true : undefined}
-        aria-describedby={errore ? `${id}-e` : undefined}
-      />
-      {errore ? (
+      {permesso ? (
+        <>
+          {campo('ret', 'Permesso', 'Ore di permesso riconosciute da HR')}
+          {campo('non', 'Non ric.', 'Ore di permesso non riconosciute da HR')}
+          {opzioni.oreResidueMonteOre !== undefined && (
+            <span className="ore-hr-nota testo-secondario" title="Ore ancora disponibili nel monte ore del lavoratore, senza contare questa richiesta">
+              Monte ore residuo: {f.numero(opzioni.oreResidueMonteOre)} h
+            </span>
+          )}
+        </>
+      ) : (
+        <>
+          {campo('ret', 'Retr.', 'Ore retribuite riconosciute da HR')}
+          {campo(
+            'get',
+            'Gett.',
+            'Ore gettone riconosciute da HR',
+            gettoneNonPrevisto && parseOre(valore.get) === 0 ? { disabled: true, title: 'Per questo corso il gettone non è previsto' } : {},
+          )}
+          {campo('non', 'Non retr.', 'Ore da non retribuire riconosciute da HR')}
+        </>
+      )}
+      {errore && (
         <span className="ore-hr-errore" id={`${id}-e`}>
           {errore}
         </span>
-      ) : (
-        modificate && (
-          <span className="ore-hr-nota">
-            <Etichetta tono="info">Modificate</Etichetta>{' '}
+      )}
+      {(pareggiabile || modificate) && (
+        <span className="ore-hr-nota">
+          {modificate && !errore && <Etichetta tono="info">Modificate</Etichetta>}{' '}
+          {pareggiabile && (
+            <button
+              type="button"
+              className="btn-link"
+              onClick={() => onCambia({ ...valore, non: testoOre(resto) })}
+              title={`Mette le ${f.numero(resto)} h restanti tra le ore ${permesso ? 'non riconosciute' : 'da non retribuire'}`}
+            >
+              Resto → {permesso ? 'non ric.' : 'non retr.'}
+            </button>
+          )}{' '}
+          {modificate && (
             <button type="button" className="btn-link" onClick={onRipristina}>
               Ripristina
             </button>
-          </span>
-        )
+          )}
+        </span>
       )}
     </div>
   );
@@ -620,8 +745,7 @@ function DialogoPerimetro({
   const proprie = inAttesa.filter((r) => r.login === loginUtente);
   const chiuse = inAttesa.filter((r) => r.login !== loginUtente && meseChiusoIn(chiusure, r.annoCompetenza, r.meseCompetenza));
   const candidati = inAttesa.filter((r) => r.login !== loginUtente && !meseChiusoIn(chiusure, r.annoCompetenza, r.meseCompetenza));
-  const totRet = arrotonda2(candidati.reduce((s, r) => s + oreCoordinatore(r).ret, 0));
-  const totGet = arrotonda2(candidati.reduce((s, r) => s + oreCoordinatore(r).get, 0));
+  const totali = totaliVoci(candidati.map((r) => ({ r, ore: oreCoordinatore(r) })));
   const lavoratori = new Set(candidati.map((r) => r.login)).size;
 
   const tipo = TIPI_PERIMETRO.find((t) => t.valore === perimetro.tipo) ?? TIPI_PERIMETRO[0]!;
@@ -655,7 +779,8 @@ function DialogoPerimetro({
     >
       <p style={{ margin: 0 }}>
         Decidi in un’unica operazione su tutte le richieste <strong>approvate dai coordinatori e in attesa di validazione HR</strong> di un coordinatore, centro di
-        costo, servizio o area. Si usano le ore riconosciute dai coordinatori: le correzioni inserite nella tabella valgono solo per le richieste selezionate.
+        costo, servizio o area (formazione e permessi). Si usano le ore riconosciute dai coordinatori: le correzioni inserite nella tabella valgono solo per le
+        richieste selezionate.
       </p>
       <Griglia colonne={2}>
         <CampoSelezione
@@ -689,8 +814,10 @@ function DialogoPerimetro({
             <div className="perimetro-conteggio">
               <Indicatore etichetta="Richieste interessate" valore={candidati.length} tono={candidati.length ? 'avviso' : 'neutro'} />
               <Indicatore etichetta="Lavoratori" valore={lavoratori} />
-              <Indicatore etichetta="Ore retribuite (coord.)" valore={f.numero(totRet)} />
-              <Indicatore etichetta="Ore gettone (coord.)" valore={f.numero(totGet)} />
+              <Indicatore etichetta="Ore retribuite (coord.)" valore={f.numero(totali.retribuite)} />
+              <Indicatore etichetta="Ore gettone (coord.)" valore={f.numero(totali.gettone)} />
+              <Indicatore etichetta="Ore non retribuite (coord.)" valore={f.numero(totali.nonRetribuite)} />
+              <Indicatore etichetta="Ore di permesso (coord.)" valore={f.numero(totali.permessi)} tono={totali.numeroPermessi ? 'info' : 'neutro'} />
             </div>
             {candidati.length === 0 && <Avviso tono="info">Nel perimetro {descrizione} non ci sono richieste in attesa di validazione HR.</Avviso>}
             {(proprie.length > 0 || chiuse.length > 0) && (
@@ -707,10 +834,10 @@ function DialogoPerimetro({
                   {candidati.map((r) => (
                     <li key={r.id}>
                       <span>
-                        <strong>{r.numero}</strong> · {nominativo(r)} · {titoloCorso(r)} · {f.data(r.dataSessione)}
+                        <strong>{r.numero}</strong> · {nominativo(r)} · {titoloRichiesta(r)} · {f.data(r.dataSessione)}
                       </span>
                       <span className="num" style={{ whiteSpace: 'nowrap' }}>
-                        {f.numero(oreCoordinatore(r).ret)} retr. · {f.numero(oreCoordinatore(r).get)} gett.
+                        {testoVoci(r.tipologia, vociCoordinatore(r))}
                       </span>
                     </li>
                   ))}

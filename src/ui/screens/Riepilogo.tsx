@@ -5,6 +5,10 @@
  * (chi è sia coordinatore sia HR vede il quadro completo). Indicatori, totali per coordinatore /
  * servizio / centro di costo / area, elenchi delle richieste in attesa e respinte dai coordinatori,
  * dettaglio esportabile in CSV e stampabile.
+ *
+ * Le ore sono distinte per voce – retribuite, a gettone, da non retribuire e ore di permesso
+ * (diritto allo studio, riqualifica professionale) – e per fase: richieste dai lavoratori,
+ * approvate dai coordinatori, validate da HR.
  */
 import { useMemo, useState, type ChangeEvent } from 'react';
 import {
@@ -19,6 +23,7 @@ import {
   type Area,
   type KPI,
   type Raggruppamento,
+  type Richiesta,
   type RigaRaggruppata,
   type StatoRichiesta,
 } from '../../domain';
@@ -42,12 +47,29 @@ import { useApp, useMessaggi } from '../contesto';
 import * as f from '../format';
 import { useCarica } from '../hooks';
 import { naviga, ROTTE } from '../router';
-import { CoppiaOre, csvRichieste, nominativo, oggiAnnoMese, opzioniAnni, opzioniDistinte, OPZIONI_MESI, titoloCorso, unisciOpzioni } from './gestione/comuni';
+import {
+  CellaTitolo,
+  comeTipologia,
+  csvRichieste,
+  LegendaVoci,
+  nominativo,
+  oggiAnnoMese,
+  opzioniAnni,
+  opzioniDistinte,
+  OPZIONI_MESI,
+  OPZIONI_TIPOLOGIA,
+  unisciOpzioni,
+  vociCoordinatore,
+  vociHR,
+  VociOre,
+  vociRichieste,
+} from './gestione/comuni';
 import '../../styles/gestione.css';
 
 type Sezione = 'gruppi' | 'attesa' | 'respinte' | 'dettaglio';
 
 interface Filtri {
+  tipologia: string;
   anno: string;
   mese: string;
   area: string;
@@ -62,7 +84,7 @@ function filtriIniziali(): Filtri {
   // in modo predefinito: il mese appena concluso (quello da chiudere e riepilogare, Flusso 5)
   const oggi = oggiAnnoMese();
   const p = mesePrecedente(oggi.anno, oggi.mese);
-  return { anno: String(p.anno), mese: String(p.mese), area: '', servizio: '', centroDiCosto: '', coordinatoreLogin: '', login: '', stato: '' };
+  return { tipologia: '', anno: String(p.anno), mese: String(p.mese), area: '', servizio: '', centroDiCosto: '', coordinatoreLogin: '', login: '', stato: '' };
 }
 
 const ETICHETTE_RAGGRUPPAMENTO: Record<Raggruppamento, string> = {
@@ -92,6 +114,7 @@ export function Riepilogo() {
   const righe = useMemo(
     () =>
       filtraRichieste(richieste, {
+        tipologia: comeTipologia(filtri.tipologia),
         mese: filtri.mese ? Number(filtri.mese) : undefined,
         area: (filtri.area || undefined) as Area | undefined,
         servizio: filtri.servizio || undefined,
@@ -103,6 +126,14 @@ export function Riepilogo() {
     [richieste, filtri],
   );
   const kpi = useMemo(() => calcolaKPI(righe), [righe]);
+  // ore di permesso validate da HR, distinte per tipo di permesso
+  const permessiPerTipo = useMemo(
+    () => ({
+      dirittoStudio: calcolaKPI(righe.filter((r) => r.tipologia === 'Diritto allo studio')).orePermessiHR,
+      riqualifica: calcolaKPI(righe.filter((r) => r.tipologia === 'Riqualifica professionale')).orePermessiHR,
+    }),
+    [righe],
+  );
   const gruppi = useMemo(() => raggruppa(righe, per), [righe, per]);
   const inAttesa = useMemo(() => righe.filter((r) => IN_ATTESA_COORDINATORE.has(r.stato)).sort((a, b) => b.giorniAttesa - a.giorniAttesa), [righe]);
   const respinte = useMemo(() => righe.filter((r) => r.stato === 'Respinta dal coordinatore'), [righe]);
@@ -132,6 +163,7 @@ export function Riepilogo() {
           ? `${OPZIONI_MESI[Number(filtri.mese) - 1]?.etichetta} (tutti gli anni)`
           : 'Tutti i periodi';
   const altriFiltri = [
+    filtri.tipologia && `Tipologia: ${filtri.tipologia}`,
     filtri.area,
     filtri.servizio,
     filtri.centroDiCosto,
@@ -152,7 +184,11 @@ export function Riepilogo() {
   return (
     <Pagina
       titolo="Riepilogo mensile"
-      sottotitolo={quadroCompleto ? 'Quadro completo della formazione di tutta l’organizzazione.' : 'Riepilogo della formazione del tuo gruppo di lavoro.'}
+      sottotitolo={
+        quadroCompleto
+          ? 'Quadro completo di formazione e permessi (diritto allo studio, riqualifica professionale) di tutta l’organizzazione.'
+          : 'Riepilogo di formazione e permessi del tuo gruppo di lavoro.'
+      }
       azioni={
         <>
           <Pulsante variante="secondario" icona="file" onClick={() => window.print()} disabled={!dati.dati}>
@@ -173,6 +209,7 @@ export function Riepilogo() {
       </div>
 
       <BarraFiltri onAzzera={azzera} conteggio={`${righe.length} ${righe.length === 1 ? 'richiesta' : 'richieste'}`}>
+        <CampoSelezione etichetta="Tipologia" value={filtri.tipologia} onChange={cambia('tipologia')} vuota="Tutte" opzioni={OPZIONI_TIPOLOGIA} />
         <CampoSelezione etichetta="Mese" value={filtri.mese} onChange={cambia('mese')} vuota="Tutti" opzioni={OPZIONI_MESI} />
         <CampoSelezione etichetta="Anno" value={filtri.anno} onChange={cambia('anno')} vuota="Tutti" opzioni={opzioni.anni} />
         <CampoSelezione etichetta="Area" value={filtri.area} onChange={cambia('area')} vuota="Tutte" opzioni={opzioni.aree} />
@@ -191,7 +228,7 @@ export function Riepilogo() {
       ) : (
         dati.dati && (
           <>
-            <Indicatori kpi={kpi} periodo={periodoTesto} />
+            <Indicatori kpi={kpi} periodo={periodoTesto} permessiPerTipo={permessiPerTipo} />
             {kpi.richieste === 0 && <Avviso tono="info">Nessuna richiesta inviata nel periodo e con i filtri selezionati.</Avviso>}
 
             <div className="non-stampare">
@@ -240,11 +277,11 @@ export function Riepilogo() {
                     { titolo: 'Richiesta', valore: (r) => <span className="cella-principale">{r.numero}</span> },
                     { titolo: 'Lavoratore', valore: (r) => nominativo(r) },
                     ...(quadroCompleto ? [{ titolo: 'Coordinatore', valore: (r: (typeof inAttesa)[number]) => r.coordinatoreNome ?? '—' }] : []),
-                    { titolo: 'Corso', valore: (r) => <span className="cella-titolo-corso testo-a-capo">{titoloCorso(r)}</span> },
-                    { titolo: 'Data corso', valore: (r) => f.data(r.dataSessione) },
+                    { titolo: 'Tipologia e corso / attività', valore: (r) => <CellaTitolo r={r} /> },
+                    { titolo: 'Data', valore: (r) => f.data(r.dataSessione) },
                     { titolo: 'Inviata il', valore: (r) => f.data(r.inviatoIl), secondaria: true },
                     { titolo: 'Giorni lavorativi in attesa', valore: (r) => (r.segnalataHR ? <strong style={{ color: 'var(--pericolo)' }}>{r.giorniAttesa} (segnalata HR)</strong> : r.giorniAttesa), numerica: true },
-                    { titolo: 'Ore richieste', valore: (r) => <CoppiaOre retribuite={r.oreRetribuiteRichieste} gettone={r.oreGettoneRichieste} />, numerica: true },
+                    { titolo: 'Ore richieste', valore: (r) => <VociOre tipologia={r.tipologia} {...vociRichieste(r)} />, numerica: true },
                   ]}
                 />
               </div>
@@ -264,9 +301,9 @@ export function Riepilogo() {
                     { titolo: 'Richiesta', valore: (r) => <span className="cella-principale">{r.numero}</span> },
                     { titolo: 'Lavoratore', valore: (r) => nominativo(r) },
                     ...(quadroCompleto ? [{ titolo: 'Coordinatore', valore: (r: (typeof respinte)[number]) => r.coordinatoreNome ?? '—' }] : []),
-                    { titolo: 'Corso', valore: (r) => <span className="cella-titolo-corso testo-a-capo">{titoloCorso(r)}</span> },
-                    { titolo: 'Data corso', valore: (r) => f.data(r.dataSessione) },
-                    { titolo: 'Ore richieste', valore: (r) => <CoppiaOre retribuite={r.oreRetribuiteRichieste} gettone={r.oreGettoneRichieste} />, numerica: true },
+                    { titolo: 'Tipologia e corso / attività', valore: (r) => <CellaTitolo r={r} /> },
+                    { titolo: 'Data', valore: (r) => f.data(r.dataSessione) },
+                    { titolo: 'Ore richieste', valore: (r) => <VociOre tipologia={r.tipologia} {...vociRichieste(r)} />, numerica: true },
                     { titolo: 'Motivazione', valore: (r) => <span className="testo-a-capo">{r.noteCoordinatore ?? '—'}</span> },
                   ]}
                 />
@@ -306,25 +343,22 @@ export function Riepilogo() {
                       secondaria: true,
                     },
                     ...(quadroCompleto ? [{ titolo: 'Coordinatore', valore: (r: (typeof righe)[number]) => r.coordinatoreNome ?? '—', secondaria: true }] : []),
-                    {
-                      titolo: 'Corso',
-                      valore: (r) => (
-                        <span className="cella-titolo-corso testo-a-capo">
-                          {titoloCorso(r)}
-                          <span className="cella-secondaria">{r.codiceCorso}</span>
-                        </span>
-                      ),
-                    },
+                    { titolo: 'Tipologia e corso / attività', valore: (r) => <CellaTitolo r={r} /> },
                     { titolo: 'Data', valore: (r) => f.data(r.dataSessione) },
-                    { titolo: 'Ore svolte', valore: (r) => f.numero(r.oreFrequentate), numerica: true },
-                    { titolo: 'Richieste', valore: (r) => <CoppiaOre retribuite={r.oreRetribuiteRichieste} gettone={r.oreGettoneRichieste} />, numerica: true },
-                    { titolo: 'Approvate coordinatore', valore: (r) => <CoppiaOre retribuite={r.oreRetribuiteCoord} gettone={r.oreGettoneCoord} />, numerica: true },
-                    { titolo: 'Approvate HR', valore: (r) => <CoppiaOre retribuite={r.oreRetribuiteHR} gettone={r.oreGettoneHR} />, numerica: true },
+                    { titolo: 'Ore frequentate', valore: (r) => f.numero(r.oreFrequentate), numerica: true },
+                    { titolo: 'Ore richieste', valore: (r: Richiesta) => <VociOre tipologia={r.tipologia} {...vociRichieste(r)} />, numerica: true },
+                    { titolo: 'Approvate coordinatore', valore: (r) => <VociOre tipologia={r.tipologia} {...vociCoordinatore(r)} />, numerica: true },
+                    { titolo: 'Validate HR', valore: (r) => <VociOre tipologia={r.tipologia} {...vociHR(r)} />, numerica: true },
                     { titolo: 'Stato', valore: (r) => <BadgeStato stato={r.stato} /> },
                   ]}
                 />
               </div>
             </section>
+            {kpi.richieste > 0 && (
+              <div className="non-stampare">
+                <LegendaVoci />
+              </div>
+            )}
           </>
         )
       )}
@@ -332,36 +366,105 @@ export function Riepilogo() {
   );
 }
 
-function Indicatori({ kpi, periodo }: { kpi: KPI; periodo: string }) {
+/** Valori delle fasi precedenti, mostrati sotto il numero validato da HR. */
+function Fasi({ richieste, coordinatori }: { richieste: number; coordinatori: number }) {
+  return (
+    <>
+      Richieste {f.numero(richieste)} · Coordinatori {f.numero(coordinatori)}
+    </>
+  );
+}
+
+/**
+ * Indicatori del riepilogo. Per ogni voce il numero grande è quello validato da HR (definitivo);
+ * sotto, le ore richieste dai lavoratori e quelle approvate dai coordinatori.
+ */
+function Indicatori({ kpi, periodo, permessiPerTipo }: { kpi: KPI; periodo: string; permessiPerTipo: { dirittoStudio: number; riqualifica: number } }) {
   return (
     <div className="indicatori indicatori-compatti" role="group" aria-label={`Indicatori: ${periodo}`}>
       <Indicatore etichetta="Lavoratori coinvolti" valore={kpi.lavoratori} nota={periodo} tono="info" />
       <Indicatore etichetta="Richieste totali" valore={kpi.richieste} nota="Escluse bozze e annullate" tono="info" />
-      <Indicatore etichetta="Ore frequentate" valore={f.numero(kpi.oreFrequentate)} />
-      <Indicatore etichetta="Ore retribuite richieste" valore={f.numero(kpi.oreRetribuiteRichieste)} />
-      <Indicatore etichetta="Ore gettone richieste" valore={f.numero(kpi.oreGettoneRichieste)} />
-      <Indicatore etichetta="Ore retribuite approvate dai coordinatori" valore={f.numero(kpi.oreRetribuiteCoord)} tono="avviso" />
-      <Indicatore etichetta="Ore gettone approvate dai coordinatori" valore={f.numero(kpi.oreGettoneCoord)} tono="avviso" />
-      <Indicatore etichetta="Ore retribuite approvate da HR" valore={f.numero(kpi.oreRetribuiteHR)} tono="successo" />
-      <Indicatore etichetta="Ore gettone approvate da HR" valore={f.numero(kpi.oreGettoneHR)} tono="successo" />
+      <Indicatore etichetta="Ore frequentate" valore={f.numero(kpi.oreFrequentate)} nota="Formazione e permessi" />
+      <Indicatore
+        etichetta="Ore retribuite validate da HR"
+        valore={f.numero(kpi.oreRetribuiteHR)}
+        nota={<Fasi richieste={kpi.oreRetribuiteRichieste} coordinatori={kpi.oreRetribuiteCoord} />}
+        tono="successo"
+      />
+      <Indicatore
+        etichetta="Ore gettone validate da HR"
+        valore={f.numero(kpi.oreGettoneHR)}
+        nota={<Fasi richieste={kpi.oreGettoneRichieste} coordinatori={kpi.oreGettoneCoord} />}
+        tono="successo"
+      />
+      <Indicatore
+        etichetta="Ore da non retribuire validate da HR"
+        valore={f.numero(kpi.oreNonRetribuiteHR)}
+        nota={<Fasi richieste={kpi.oreNonRetribuiteRichieste} coordinatori={kpi.oreNonRetribuiteCoord} />}
+      />
+      <Indicatore
+        etichetta="Ore di permesso validate da HR"
+        valore={f.numero(kpi.orePermessiHR)}
+        nota={
+          <>
+            Diritto allo studio {f.numero(permessiPerTipo.dirittoStudio)} · Riqualifica professionale {f.numero(permessiPerTipo.riqualifica)}
+            <br />
+            <Fasi richieste={kpi.orePermessiRichieste} coordinatori={kpi.orePermessiCoord} />
+          </>
+        }
+        tono="info"
+      />
     </div>
+  );
+}
+
+/** Le quattro voci di una fase (richieste, coordinatori o HR) su più righe, per la tabella dei totali. */
+function VociFase({ retribuite, gettone, nonRetribuite, permessi, totale }: { retribuite: number; gettone: number; nonRetribuite: number; permessi: number; totale: boolean }) {
+  return (
+    <span className={`ore-voci${totale ? ' riga-totale' : ''}`}>
+      <span>
+        {f.numero(retribuite)} <small>retr.</small>
+      </span>
+      <span>
+        {f.numero(gettone)} <small>gett.</small>
+      </span>
+      <span>
+        {f.numero(nonRetribuite)} <small>non retr.</small>
+      </span>
+      <span>
+        {f.numero(permessi)} <small>permesso</small>
+      </span>
+    </span>
   );
 }
 
 function TabellaGruppi({ gruppi, totale, per }: { gruppi: RigaRaggruppata[]; totale: KPI; per: Raggruppamento }) {
   const righe: RigaRaggruppata[] = gruppi.length ? [...gruppi, { chiave: RIGA_TOTALE, etichetta: 'Totale', ...totale }] : [];
-  const tot = (r: RigaRaggruppata, testo: string | number) => (r.chiave === RIGA_TOTALE ? <strong className="riga-totale">{testo}</strong> : testo);
+  const eTotale = (r: RigaRaggruppata) => r.chiave === RIGA_TOTALE;
+  const tot = (r: RigaRaggruppata, testo: string | number) => (eTotale(r) ? <strong className="riga-totale">{testo}</strong> : testo);
   const colonne: Colonna<RigaRaggruppata>[] = [
     { titolo: ETICHETTE_RAGGRUPPAMENTO[per], valore: (r) => tot(r, r.etichetta) },
     { titolo: 'Lavoratori', valore: (r) => tot(r, r.lavoratori), numerica: true },
     { titolo: 'Richieste', valore: (r) => tot(r, r.richieste), numerica: true },
     { titolo: 'Ore frequentate', valore: (r) => tot(r, f.numero(r.oreFrequentate)), numerica: true },
-    { titolo: 'Retribuite richieste', valore: (r) => tot(r, f.numero(r.oreRetribuiteRichieste)), numerica: true, secondaria: true },
-    { titolo: 'Gettone richieste', valore: (r) => tot(r, f.numero(r.oreGettoneRichieste)), numerica: true, secondaria: true },
-    { titolo: 'Retribuite approvate coord.', valore: (r) => tot(r, f.numero(r.oreRetribuiteCoord)), numerica: true },
-    { titolo: 'Gettone approvate coord.', valore: (r) => tot(r, f.numero(r.oreGettoneCoord)), numerica: true },
-    { titolo: 'Retribuite approvate HR', valore: (r) => tot(r, f.numero(r.oreRetribuiteHR)), numerica: true },
-    { titolo: 'Gettone approvate HR', valore: (r) => tot(r, f.numero(r.oreGettoneHR)), numerica: true },
+    {
+      titolo: 'Ore richieste',
+      numerica: true,
+      secondaria: true,
+      valore: (r) => (
+        <VociFase retribuite={r.oreRetribuiteRichieste} gettone={r.oreGettoneRichieste} nonRetribuite={r.oreNonRetribuiteRichieste} permessi={r.orePermessiRichieste} totale={eTotale(r)} />
+      ),
+    },
+    {
+      titolo: 'Approvate dai coordinatori',
+      numerica: true,
+      valore: (r) => <VociFase retribuite={r.oreRetribuiteCoord} gettone={r.oreGettoneCoord} nonRetribuite={r.oreNonRetribuiteCoord} permessi={r.orePermessiCoord} totale={eTotale(r)} />,
+    },
+    {
+      titolo: 'Validate da HR',
+      numerica: true,
+      valore: (r) => <VociFase retribuite={r.oreRetribuiteHR} gettone={r.oreGettoneHR} nonRetribuite={r.oreNonRetribuiteHR} permessi={r.orePermessiHR} totale={eTotale(r)} />,
+    },
   ];
   return (
     <div className="gestione-tabella tabella-compatta">

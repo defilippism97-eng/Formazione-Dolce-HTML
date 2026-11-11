@@ -16,7 +16,7 @@ export type TipoAnomalia =
 
 export const ETICHETTA_ANOMALIA: Record<TipoAnomalia, string> = {
   duplicato: 'Possibile duplicato',
-  attestatoMancante: 'Attestato mancante',
+  attestatoMancante: 'Corso esterno senza attestato (facoltativo)',
   sessioniNonCoincidenti: 'Ore del corso non coincidenti',
   senzaCoordinatore: 'Coordinatore non assegnato',
   codiceFiscaleMancante: 'Codice fiscale mancante',
@@ -32,8 +32,13 @@ export interface Anomalia {
   lavoratoreId?: string;
 }
 
-const CON_ATTESTATO_ATTESO = (r: Richiesta) =>
-  r.stato !== 'Bozza' && !ESCLUSI_DAI_CONTROLLI.has(r.stato);
+/** L'attestato si allega solo per i corsi esterni, ed è facoltativo: la mancanza è un'informazione, non un errore. */
+const SENZA_ATTESTATO = (r: Richiesta) =>
+  r.tipologia === 'Formazione' &&
+  r.ente === 'Committente o altro soggetto' &&
+  r.stato !== 'Bozza' &&
+  !ESCLUSI_DAI_CONTROLLI.has(r.stato) &&
+  !r.allegati.some((a) => a.tipo === 'Attestato');
 
 /**
  * @param richieste richieste del periodo da controllare
@@ -52,8 +57,8 @@ export function rilevaAnomalie(
     if (r.possibileDuplicato && !ESCLUSI_DAI_CONTROLLI.has(r.stato)) {
       out.push({ tipo: 'duplicato', gravita: 'alta', richiestaId: r.id, descrizione: `${r.numero}: stesso lavoratore, corso e data di un'altra richiesta` });
     }
-    if (CON_ATTESTATO_ATTESO(r) && !r.allegati.some((a) => a.tipo === 'Attestato')) {
-      out.push({ tipo: 'attestatoMancante', gravita: 'media', richiestaId: r.id, descrizione: `${r.numero}: nessun attestato allegato` });
+    if (SENZA_ATTESTATO(r)) {
+      out.push({ tipo: 'attestatoMancante', gravita: 'bassa', richiestaId: r.id, descrizione: `${r.numero}: corso esterno senza attestato allegato` });
     }
     if (!r.coordinatoreLogin && APERTI.has(r.stato)) {
       out.push({ tipo: 'senzaCoordinatore', gravita: 'alta', richiestaId: r.id, descrizione: `${r.numero}: richiesta senza coordinatore` });
@@ -66,7 +71,7 @@ export function rilevaAnomalie(
   // Durata complessiva del corso: somma delle sessioni per lavoratore e codice corso
   const gruppi = new Map<string, Richiesta[]>();
   for (const r of tutteLeRichieste) {
-    if (r.stato === 'Bozza' || ESCLUSI_DAI_CONTROLLI.has(r.stato)) continue;
+    if (r.tipologia !== 'Formazione' || r.stato === 'Bozza' || ESCLUSI_DAI_CONTROLLI.has(r.stato)) continue;
     const k = `${r.login}|${r.codiceCorso}`;
     gruppi.set(k, [...(gruppi.get(k) ?? []), r]);
   }

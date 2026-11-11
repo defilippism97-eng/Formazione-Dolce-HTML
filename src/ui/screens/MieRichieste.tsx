@@ -9,6 +9,9 @@ import {
   MODIFICABILI_DAL_LAVORATORE,
   NOMI_MESI,
   STATI_RICHIESTA,
+  TIPOLOGIE,
+  isPermesso,
+  titoloRichiesta,
   type ChiusuraMensile,
   type Richiesta,
 } from '../../domain';
@@ -36,8 +39,11 @@ export function MieRichieste() {
   const [anno, setAnno] = useState('');
   const [mese, setMese] = useState('');
   const [stato, setStato] = useState('');
+  const [tipologia, setTipologia] = useState('');
   const [gruppo, setGruppo] = useState<Gruppo>(() => (parametriQuery().get('gruppo') as Gruppo) ?? '');
 
+  // il filtro per tipologia serve solo a chi ha anche permessi di studio o riqualifica
+  const conPermessi = useMemo(() => (dati.dati?.richieste ?? []).some(isPermesso), [dati.dati]);
   const anni = useMemo(() => [...new Set((dati.dati?.richieste ?? []).map((r) => r.annoCompetenza))].sort((a, b) => b - a), [dati.dati]);
   const righe = useMemo(
     () =>
@@ -46,17 +52,18 @@ export function MieRichieste() {
           (!anno || r.annoCompetenza === Number(anno)) &&
           (!mese || r.meseCompetenza === Number(mese)) &&
           (!stato || r.stato === stato) &&
+          (!tipologia || r.tipologia === tipologia) &&
           (gruppo !== 'approvate' || DEFINITIVI.has(r.stato)) &&
           (gruppo !== 'aperte' || (APERTI.has(r.stato) && r.stato !== 'Bozza')) &&
           (gruppo !== 'bozze' || r.stato === 'Bozza'),
       ),
-    [dati.dati, anno, mese, stato, gruppo],
+    [dati.dati, anno, mese, stato, tipologia, gruppo],
   );
 
   const annulla = async (r: Richiesta) => {
     const ok = await conferma({
       titolo: 'Annullare la richiesta?',
-      testo: `La richiesta ${r.numero} (${r.titoloCorsoLibero || r.titoloCorso}) verrà annullata e non potrà più essere inviata.${r.stato !== 'Bozza' ? '\nIl coordinatore riceverà un avviso.' : ''}`,
+      testo: `La richiesta ${r.numero} (${titoloRichiesta(r)}) verrà annullata e non potrà più essere inviata.${r.stato !== 'Bozza' ? '\nIl coordinatore riceverà un avviso.' : ''}`,
       etichettaConferma: 'Annulla la richiesta',
       pericolo: true,
     });
@@ -68,13 +75,14 @@ export function MieRichieste() {
     setAnno('');
     setMese('');
     setStato('');
+    setTipologia('');
     setGruppo('');
   };
 
   return (
     <Pagina
       titolo="Le mie richieste"
-      sottotitolo="Le richieste di riconoscimento delle ore di formazione che hai inserito."
+      sottotitolo="Le richieste di riconoscimento delle ore che hai inserito: formazione e, se HR ti ha abilitato, permessi per studio e riqualifica."
       azioni={
         <Pulsante icona="aggiungi" onClick={() => naviga(ROTTE.nuovaRichiesta)}>
           Nuova richiesta
@@ -85,6 +93,9 @@ export function MieRichieste() {
         <CampoSelezione etichetta="Anno" value={anno} onChange={(e) => setAnno(e.target.value)} vuota="Tutti" opzioni={anni.map((a) => ({ valore: String(a), etichetta: String(a) }))} />
         <CampoSelezione etichetta="Mese" value={mese} onChange={(e) => setMese(e.target.value)} vuota="Tutti" opzioni={NOMI_MESI.map((m, i) => ({ valore: String(i + 1), etichetta: m }))} />
         <CampoSelezione etichetta="Stato" value={stato} onChange={(e) => setStato(e.target.value)} vuota="Tutti" opzioni={STATI_RICHIESTA.map((s) => ({ valore: s, etichetta: s }))} />
+        {conPermessi && (
+          <CampoSelezione etichetta="Tipologia" value={tipologia} onChange={(e) => setTipologia(e.target.value)} vuota="Tutte" opzioni={TIPOLOGIE.map((t) => ({ valore: t, etichetta: t }))} />
+        )}
         <CampoSelezione
           etichetta="Mostra"
           value={gruppo}
@@ -122,17 +133,17 @@ export function MieRichieste() {
                 </>
               ),
             },
-            { titolo: 'Data corso', valore: (r) => f.data(r.dataSessione) },
+            { titolo: 'Data', valore: (r) => f.data(r.dataSessione) },
             {
-              titolo: 'Titolo corso',
+              titolo: 'Corso o attività',
               valore: (r) => (
                 <>
-                  {r.titoloCorsoLibero || r.titoloCorso}
-                  <span className="cella-secondaria">{r.codiceCorso}</span>
+                  <span className="cella-titolo">{titoloRichiesta(r)}</span>
+                  <span className="cella-secondaria">{isPermesso(r) ? <Etichetta tono="info">{r.tipologia}</Etichetta> : r.codiceCorso}</span>
                 </>
               ),
             },
-            { titolo: 'Ore richieste', valore: (r) => f.ore(r.oreRetribuiteRichieste + r.oreGettoneRichieste), numerica: true },
+            { titolo: 'Ore frequentate', valore: (r) => f.ore(r.oreFrequentate), numerica: true },
             { titolo: 'Stato', valore: (r) => <BadgeStato stato={r.stato} /> },
             { titolo: 'Ultima modifica', valore: (r) => f.dataOra(r.modificatoIl), secondaria: true },
           ]}

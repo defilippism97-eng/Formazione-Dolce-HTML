@@ -9,6 +9,8 @@ export interface AzioniConsentite {
   annulla: boolean;
   esitoCoordinatore: boolean;
   esitoHR: boolean;
+  /** Coordinatore o HR possono correggere titolo e dati di un corso esterno inserito dal lavoratore. */
+  correzioneCorso: boolean;
 }
 
 const PRIORITA: Ruolo[] = ['admin', 'hr', 'coordinatore', 'lavoratore'];
@@ -43,13 +45,16 @@ export function puoVedereRichiesta(s: Sessione, r: Richiesta): boolean {
 /** Azioni consentite sulla singola richiesta. `meseChiuso` = mese di competenza chiuso. */
 export function azioniConsentite(s: Sessione, r: Richiesta, meseChiuso: boolean): AzioniConsentite {
   const proprietario = r.login === s.login;
+  // nessuno approva le proprie richieste
+  const esitoCoordinatore =
+    !proprietario && !meseChiuso && haRuolo(s, 'coordinatore') && r.coordinatoreLogin === s.login && IN_ATTESA_COORDINATORE.has(r.stato);
+  const esitoHR = !proprietario && !meseChiuso && isUfficioHR(s) && IN_ATTESA_HR.has(r.stato);
   return {
     modifica: proprietario && !meseChiuso && MODIFICABILI_DAL_LAVORATORE.has(r.stato),
     annulla: proprietario && !meseChiuso && ANNULLABILI_DAL_LAVORATORE.has(r.stato),
-    // nessuno approva le proprie richieste
-    esitoCoordinatore:
-      !proprietario && !meseChiuso && haRuolo(s, 'coordinatore') && r.coordinatoreLogin === s.login && IN_ATTESA_COORDINATORE.has(r.stato),
-    esitoHR: !proprietario && !meseChiuso && isUfficioHR(s) && IN_ATTESA_HR.has(r.stato),
+    esitoCoordinatore,
+    esitoHR,
+    correzioneCorso: (esitoCoordinatore || esitoHR) && r.tipologia === 'Formazione' && r.ente === 'Committente o altro soggetto',
   };
 }
 

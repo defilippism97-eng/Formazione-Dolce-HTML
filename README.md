@@ -4,15 +4,21 @@ App web per **digitalizzare il foglio delle ore di formazione**:
 
 **Lavoratore → Coordinatore → Ufficio HR/Formazione → Ufficio Paghe**
 
-Implementa tutte le funzioni del documento di analisi:
+Implementa tutte le funzioni del documento di analisi e gli aggiornamenti concordati con Ufficio Formazione e IT:
 - **4 ruoli**: lavoratore, coordinatore, Formazione HR, amministratore;
-- **13 stati** della richiesta e controlli R1–R12;
+- **13 stati** della richiesta e controlli R1–R14;
+- **tre tipologie**: formazione e, per i lavoratori abilitati da HR, **Diritto allo studio** e **Riqualifica professionale** con **monte ore** individuale che si scala fino a esaurimento;
+- **pausa** della sessione e ripartizione delle ore in **retribuite, gettone e non retribuite** (la somma è uguale alle ore frequentate);
+- corso scelto **prima dal catalogo**: l'ente erogatore lo deduce l'app; attestato non richiesto per i corsi del datore di lavoro e facoltativo per quelli esterni;
+- il coordinatore può **correggere i dati di un corso esterno** e **segnalare variazioni di organigramma** per sé e per il team;
 - **allegati**, **notifiche**, **promemoria**;
 - **riepiloghi mensili** per coordinatore, servizio, centro di costo e area;
-- **chiusura del mese** e **file per l'Ufficio Paghe**;
+- **chiusura del mese**, con le richieste aperte raggruppate per coordinatore, e **file per l'Ufficio Paghe** con una colonna per ogni voce;
 - **registro delle modifiche** e **sicurezza per ruolo**.
 
-L'interfaccia è responsive (computer, tablet, smartphone).
+L'interfaccia è responsive (computer, tablet, smartphone) e usa logo, colori e carattere di Società Dolce.
+
+Le integrazioni con **Zucchetti** (catalogo dei corsi, date e orari delle edizioni, profilo formativo della persona) sono previste in una **fase 2** e non fanno parte di questo prototipo.
 
 ## Provarla subito (modalità DEMO)
 
@@ -67,7 +73,8 @@ src/
   data/demo/        backend simulato (DEMO): stessi controlli del server reale + dati dimostrativi
   data/http/        client delle API reali e accesso Microsoft 365
   ui/               interfaccia: struttura, componenti, schermate
-  styles/app.css    stile (colori del marchio in cima al file)
+  styles/app.css    stile (colori e carattere del marchio in cima al file)
+  assets/           logo
 tests/domain/       test delle regole e del processo completo
 tests/e2e/          test end-to-end nel browser
 index.html          modello della pagina e configurazione (DEMO / produzione)

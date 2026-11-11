@@ -10,6 +10,7 @@ import {
   aggiungiGiorni,
   arrotonda2,
   calcolaKPI,
+  calcolaOre,
   carattereControlloCF,
   dataRomaDaIstante,
   generaCsvPaghe,
@@ -17,9 +18,10 @@ import {
   isGiornoLavorativo,
   mesePrecedente,
   nomeFilePaghe,
-  oreTra,
   periodo as periodoDi,
   righePaghe,
+  titoloRichiesta,
+  totaliPaghe,
   SOGLIE_PROMEMORIA,
   SOGLIA_SEGNALAZIONE_HR,
 } from '../../domain';
@@ -31,6 +33,7 @@ import type {
   DataISO,
   Lavoratore,
   Modalita,
+  MonteOre,
   Notifica,
   Richiesta,
   RuoloRegistro,
@@ -197,9 +200,9 @@ const CATALOGO: Array<[string, string, Modalita, number, boolean, boolean, strin
 //  Testi
 // ---------------------------------------------------------------------------
 const NOTE_INTEGRAZIONE_COORD = [
-  "Allega l'attestato di partecipazione rilasciato dall'ente.",
   "L'ora di uscita non corrisponde al registro presenze: verifica e correggi.",
   'Indica nelle note sede e docente del corso.',
+  'Controlla la ripartizione tra ore retribuite e ore gettone.',
 ];
 const NOTE_RESPINTA_COORD = [
   'Il corso non rientra nel piano formativo del servizio.',
@@ -207,8 +210,8 @@ const NOTE_RESPINTA_COORD = [
   'Formazione svolta in orario di servizio già retribuito.',
 ];
 const NOTE_INTEGRAZIONE_HR = [
-  "Manca l'attestato: caricalo per completare la validazione.",
   'Le ore gettone non sono previste per questo corso: correggi la ripartizione.',
+  'Non risulta indicata la pausa pranzo: correggi gli orari della sessione.',
 ];
 const NOTE_RESPINTA_HR = ['Corso non riconosciuto ai fini contrattuali.', 'Ore già riconosciute nel mese precedente.'];
 
@@ -368,6 +371,7 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
   };
 
   const richieste: Richiesta[] = [];
+  const montiOre: MonteOre[] = [];
   const registro: VoceRegistro[] = [];
   const notifiche: Notifica[] = [];
   const limiteNotifiche = aggiungiGiorni(oggi, -14);
@@ -393,29 +397,27 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
     durata?: number;
     ritardoIngresso?: boolean;
     gettone?: boolean;
+    /** Ore che il lavoratore chiede di registrare senza retribuzione. */
+    nonRetribuite?: number;
     senzaAttestato?: boolean;
     inviatoIl?: string;
     nota?: string;
     oreCoord?: number;
     noteLavoratore?: string;
+    /** Per i permessi: nessuna riduzione casuale delle ore. */
+    senzaRiduzione?: boolean;
   }
 
-  const crea = (l: Lavoratore, c: Corso, data: DataISO, stato: StatoRichiesta, o: Opzioni = {}): Richiesta | null => {
-    const chiave = `${l.login}|${c.codice}|${data}`;
-    if (usati.has(chiave) || data >= oggi) return null;
-    usati.add(chiave);
+  const orario = (minutiTotali: number) => `${String(Math.floor(minutiTotali / 60)).padStart(2, '0')}:${String(minutiTotali % 60).padStart(2, '0')}`;
+  const inMinuti = (ora: string) => Number(ora.slice(0, 2)) * 60 + Number(ora.slice(3));
+
+  /** Campi comuni a formazione e permessi. */
+  const base = (l: Lavoratore, data: DataISO) => {
     const s = strutture.find((x) => x.id === l.strutturaId)!;
-    const durata = o.durata ?? (c.piuGiornate ? Math.min(c.durataOre, 4) : c.durataOre);
-    const oraInizio = o.oraInizio ?? (durata > 5 ? '09:00' : scegli(['08:30', '09:00', '14:00', '14:30']));
-    const minutiFine = Number(oraInizio.slice(0, 2)) * 60 + Number(oraInizio.slice(3)) + durata * 60;
-    const oraFine = `${String(Math.floor(minutiFine / 60)).padStart(2, '0')}:${String(minutiFine % 60).padStart(2, '0')}`;
-    const oraIngresso = o.ritardoIngresso ? `${oraInizio.slice(0, 3)}${String(Number(oraInizio.slice(3)) + 15).padStart(2, '0')}` : oraInizio;
-    const durataSessione = oreTra(oraInizio, oraFine);
-    const oreFrequentate = oreTra(oraIngresso, oraFine);
-    const gettone = (o.gettone ?? (c.gettonePrevisto && probabile(0.35))) && c.gettonePrevisto;
-    const creatoIl = istanteRoma(aggiungiGiorni(data, int(0, 2)), `${String(int(17, 21)).padStart(2, '0')}:${String(int(0, 59)).padStart(2, '0')}`);
+    const creato = istanteRoma(aggiungiGiorni(data, int(0, 2)), `${String(int(17, 21)).padStart(2, '0')}:${String(int(0, 59)).padStart(2, '0')}`);
+    const creatoIl = creato < istanteAdesso ? creato : new Date(adesso.getTime() - 3600_000).toISOString();
     const id = nuovoId('r');
-    const r: Richiesta = {
+    return {
       id,
       numero: `§${id}§`, // segnaposto: il numero definitivo è assegnato in ordine di creazione
       lavoratoreId: l.id,
@@ -430,27 +432,10 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
       strutturaId: s.id,
       coordinatoreLogin: l.coordinatoreLogin,
       coordinatoreNome: nomeDi(l.coordinatoreLogin),
-      corsoId: c.id,
-      codiceCorso: c.codice,
-      titoloCorso: c.ente === 'Datore di lavoro' ? c.titolo : '',
-      titoloCorsoLibero: c.ente === 'Datore di lavoro' ? undefined : c.titolo,
-      durataCorso: c.durataOre,
-      ente: c.ente,
-      modalita: c.modalita,
-      piuGiornate: c.piuGiornate,
       dataSessione: data,
-      oraInizioSessione: oraInizio,
-      oraFineSessione: oraFine,
-      durataSessione,
-      oraIngresso,
-      oraUscita: oraFine,
-      oreFrequentate,
-      oreRetribuiteRichieste: gettone ? 0 : oreFrequentate,
-      oreGettoneRichieste: gettone ? oreFrequentate : 0,
       allegati: [],
-      noteLavoratore: o.noteLavoratore,
-      stato: 'Bozza',
-      creatoIl: creatoIl < istanteAdesso ? creatoIl : new Date(adesso.getTime() - 3600_000).toISOString(),
+      stato: 'Bozza' as StatoRichiesta,
+      creatoIl,
       modificatoIl: creatoIl,
       modificatoDa: l.login,
       meseCompetenza: Number(data.slice(5, 7)),
@@ -458,10 +443,49 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
       dichiarazioni: { partecipazione: true, correttezza: true, autorizzazione: true },
       possibileDuplicato: false,
       giorniAttesa: 0,
-      promemoriaInviati: [],
+      promemoriaInviati: [] as number[],
       segnalataHR: false,
     };
-    if (!o.senzaAttestato && (stato !== 'Bozza' || probabile(0.5)) && probabile(0.9)) {
+  };
+
+  const crea = (l: Lavoratore, c: Corso, data: DataISO, stato: StatoRichiesta, o: Opzioni = {}): Richiesta | null => {
+    const chiave = `${l.login}|${c.codice}|${data}`;
+    if (usati.has(chiave) || data >= oggi) return null;
+    usati.add(chiave);
+    const durata = o.durata ?? (c.piuGiornate ? Math.min(c.durataOre, 4) : c.durataOre);
+    const oraInizio = o.oraInizio ?? (durata > 5 ? '09:00' : scegli(['08:30', '09:00', '14:00', '14:30']));
+    // le giornate intere hanno la pausa pranzo, che non conta come formazione
+    const pausaMinuti = durata > 5 ? 60 : 0;
+    const oraFine = orario(inMinuti(oraInizio) + durata * 60 + pausaMinuti);
+    const oraIngresso = o.ritardoIngresso ? orario(inMinuti(oraInizio) + 15) : oraInizio;
+    const orari = { oraInizioSessione: oraInizio, oraFineSessione: oraFine, oraIngresso, oraUscita: oraFine, pausaPrevista: pausaMinuti > 0, pausaMinuti, pausaInPresenza: pausaMinuti > 0 };
+    const ore = calcolaOre(orari);
+    const oreFrequentate = ore.oreFrequentate ?? 0;
+    const gettone = (o.gettone ?? (c.gettonePrevisto && probabile(0.35))) && c.gettonePrevisto;
+    const nonRetribuite = Math.min(o.nonRetribuite ?? (probabile(0.07) ? 1 : 0), oreFrequentate);
+    const pagate = arrotonda2(oreFrequentate - nonRetribuite);
+    const esterno = c.ente !== 'Datore di lavoro';
+    const r: Richiesta = {
+      ...base(l, data),
+      tipologia: 'Formazione',
+      corsoId: c.id,
+      codiceCorso: c.codice,
+      titoloCorso: esterno ? '' : c.titolo,
+      titoloCorsoLibero: esterno ? c.titolo : undefined,
+      durataCorso: c.durataOre,
+      ente: c.ente,
+      modalita: c.modalita,
+      piuGiornate: c.piuGiornate,
+      ...orari,
+      durataSessione: ore.durataSessione ?? 0,
+      oreFrequentate,
+      oreRetribuiteRichieste: gettone ? 0 : pagate,
+      oreGettoneRichieste: gettone ? pagate : 0,
+      oreNonRetribuiteRichieste: nonRetribuite,
+      noteLavoratore: o.noteLavoratore ?? (nonRetribuite > 0 ? 'Un’ora svolta su base volontaria: solo da registrare.' : undefined),
+    };
+    // l'attestato si allega (facoltativo) solo per i corsi di altri enti: per quelli di Società Dolce è già a sistema
+    if (esterno && !o.senzaAttestato && (stato !== 'Bozza' || probabile(0.5)) && probabile(0.75)) {
       r.allegati.push({
         id: `seed-${r.id}-a`,
         tipo: 'Attestato',
@@ -473,6 +497,49 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
     }
     log(r, r.creatoIl, l.login, 'Lavoratore', 'Creazione richiesta');
     percorso(r, stato, o);
+    richieste.push(r);
+    return r;
+  };
+
+  /** Permesso (diritto allo studio o riqualifica professionale) a carico di un monte ore. */
+  const creaPermesso = (
+    l: Lavoratore,
+    m: MonteOre,
+    data: DataISO | undefined,
+    stato: StatoRichiesta,
+    attivita: string,
+    oraInizio: string,
+    ore: number,
+    o: Opzioni = {},
+  ): Richiesta | null => {
+    if (!data) return null;
+    const chiave = `${l.login}|${m.tipo}|${data}`;
+    if (usati.has(chiave) || data >= oggi || data < m.validoDal || data > m.validoAl) return null;
+    usati.add(chiave);
+    const pausaMinuti = ore > 5 ? 60 : 0;
+    const oraFine = orario(inMinuti(oraInizio) + ore * 60 + pausaMinuti);
+    const orari = { oraInizioSessione: oraInizio, oraFineSessione: oraFine, oraIngresso: oraInizio, oraUscita: oraFine, pausaPrevista: pausaMinuti > 0, pausaMinuti, pausaInPresenza: pausaMinuti > 0 };
+    const r: Richiesta = {
+      ...base(l, data),
+      tipologia: m.tipo,
+      monteOreId: m.id,
+      descrizioneAttivita: attivita,
+      codiceCorso: '',
+      titoloCorso: '',
+      durataCorso: 0,
+      piuGiornate: false,
+      ...orari,
+      durataSessione: ore,
+      oreFrequentate: ore,
+      oreRetribuiteRichieste: ore,
+      oreGettoneRichieste: 0,
+      oreNonRetribuiteRichieste: 0,
+    };
+    if (probabile(0.6)) {
+      r.allegati.push({ id: `seed-${r.id}-d`, tipo: 'Altra documentazione', nome: `Giustificativo_${r.cognome}_${data}.pdf`, mime: 'application/pdf', dimensione: 30_000 + int(0, 40_000), caricatoIl: r.creatoIl });
+    }
+    log(r, r.creatoIl, l.login, 'Lavoratore', 'Creazione richiesta');
+    percorso(r, stato, { ...o, senzaRiduzione: true });
     richieste.push(r);
     return r;
   };
@@ -511,19 +578,22 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
       notificaCoord();
       return;
     }
-    // approvazione coordinatore (Flusso 2)
-    const riduci = probabile(0.15);
-    const totaleRichiesto = r.oreRetribuiteRichieste + r.oreGettoneRichieste;
+    // approvazione coordinatore (Flusso 2): le ore tolte passano tra le non retribuite (o non riconosciute)
+    const riduci = !o.senzaRiduzione && probabile(0.15);
+    const totaleRichiesto = arrotonda2(r.oreRetribuiteRichieste + r.oreGettoneRichieste);
     const riconosciute = o.oreCoord ?? (riduci ? Math.max(totaleRichiesto - 0.5, 0) : totaleRichiesto);
+    const tolte = arrotonda2(totaleRichiesto - riconosciute);
     r.oreRetribuiteCoord = r.oreRetribuiteRichieste > 0 ? arrotonda2(riconosciute) : 0;
     r.oreGettoneCoord = r.oreRetribuiteRichieste > 0 ? 0 : arrotonda2(riconosciute);
-    if (riconosciute !== totaleRichiesto) {
+    r.oreNonRetribuiteCoord = arrotonda2(r.oreNonRetribuiteRichieste + tolte);
+    if (tolte !== 0) {
       r.noteCoordinatore = 'Ore ridotte: uscita anticipata rispetto al registro presenze.';
-      log(r, decisione, coord, 'Coordinatore', 'Modifica ore riconosciute', {
-        campo: r.oreRetribuiteRichieste > 0 ? 'Ore retribuite riconosciute' : 'Ore gettone riconosciute',
+      log(r, decisione, coord, 'Coordinatore', 'Modifica ore', {
+        campo: r.oreRetribuiteRichieste > 0 ? 'Ore retribuite riconosciute coordinatore' : 'Ore gettone riconosciute coordinatore',
         prima: String(totaleRichiesto),
         dopo: String(riconosciute),
       });
+      log(r, decisione, coord, 'Coordinatore', 'Modifica ore', { campo: 'Ore non retribuite riconosciute coordinatore', prima: String(r.oreNonRetribuiteRichieste), dopo: String(r.oreNonRetribuiteCoord) });
     }
     r.approvatoCoordIl = decisione;
     imposta('Approvata dal coordinatore', decisione, coord, 'Coordinatore', r.noteCoordinatore);
@@ -544,6 +614,7 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
     }
     r.oreRetribuiteHR = r.oreRetribuiteCoord;
     r.oreGettoneHR = r.oreGettoneCoord;
+    r.oreNonRetribuiteHR = r.oreNonRetribuiteCoord;
     r.validatoHRIl = decisioneHR;
     imposta('Validata da HR', decisioneHR, hr, 'Formazione HR');
     notificaHR();
@@ -584,11 +655,42 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
   crea(giulia, corso('BLSD-05'), lavorativiFa(1), 'In attesa del coordinatore', { gettone: false, inviatoIl: istanteRoma(lavorativiFa(1), '19:30') });
   crea(giulia, corso('PRIV-02'), lavorativiFa(2), 'Bozza', { noteLavoratore: 'Corso svolto online dalla piattaforma aziendale.' });
 
+  // --- permessi con monte ore individuale (attivati da HR solo ad alcuni lavoratori)
+  const hrLogin = login('Laura', 'Verdi');
+  const periodoMonte = { validoDal: `${m3.anno}-01-01`, validoAl: `${annoOggi}-12-31` };
+  const assegnato = istanteRoma(`${m3.anno}-01-10`, '09:30');
+  const nuovoMonte = (l: Lavoratore, tipo: MonteOre['tipo'], oreTotali: number, extra: Partial<MonteOre> = {}): MonteOre => {
+    const m: MonteOre = { id: `mo${montiOre.length + 1}`, lavoratoreId: l.id, tipo, oreTotali, ...periodoMonte, attivo: true, assegnatoDa: hrLogin, assegnatoIl: assegnato, ...extra };
+    montiOre.push(m);
+    return m;
+  };
+  // Giulia: diritto allo studio, ampio residuo
+  const moGiulia = nuovoMonte(giulia, 'Diritto allo studio', 150, { note: 'Corso di laurea in Scienze dell’educazione' });
+  creaPermesso(giulia, moGiulia, giornoN(m2.anno, m2.mese, 12), 'Validata da HR', 'Esame di Psicologia dello sviluppo', '09:00', 4);
+  creaPermesso(giulia, moGiulia, giornoN(m1.anno, m1.mese, 15), 'Validata da HR', 'Lezioni del corso di laurea', '09:00', 8);
+  creaPermesso(giulia, moGiulia, lavorativiFa(3), 'In attesa del coordinatore', 'Esame di Pedagogia generale', '09:00', 4, { inviatoIl: istanteRoma(lavorativiFa(2), '18:20') });
+  // Sofia (team di Marco Rossi): diritto allo studio quasi esaurito
+  const sofiaConti = lav('Sofia', 'Conti');
+  const moSofia = nuovoMonte(sofiaConti, 'Diritto allo studio', 40, { note: 'Corso serale per educatore' });
+  creaPermesso(sofiaConti, moSofia, giornoN(m3.anno, m3.mese, 4), 'Validata da HR', 'Lezioni del corso serale', '09:00', 8);
+  creaPermesso(sofiaConti, moSofia, giornoN(m3.anno, m3.mese, 14), 'Validata da HR', 'Lezioni del corso serale', '09:00', 8);
+  creaPermesso(sofiaConti, moSofia, giornoN(m2.anno, m2.mese, 5), 'Validata da HR', 'Lezioni del corso serale', '09:00', 8);
+  creaPermesso(sofiaConti, moSofia, giornoN(m2.anno, m2.mese, 16), 'Validata da HR', 'Tirocinio formativo', '09:00', 8);
+  creaPermesso(sofiaConti, moSofia, giornoN(m1.anno, m1.mese, 7), 'In attesa di validazione HR', 'Esame finale del modulo', '09:00', 4);
+  // Rosa: riqualifica professionale
+  const rosa = lav('Rosa', 'Caruso');
+  const moRosa = nuovoMonte(rosa, 'Riqualifica professionale', 60, { note: 'Percorso di riqualifica OSS' });
+  creaPermesso(rosa, moRosa, giornoN(m2.anno, m2.mese, 9), 'Validata da HR', 'Corso di riqualifica OSS – modulo 1', '09:00', 6);
+  creaPermesso(rosa, moRosa, giornoN(m1.anno, m1.mese, 6), 'Validata da HR', 'Corso di riqualifica OSS – modulo 2', '09:00', 6);
+  creaPermesso(rosa, moRosa, giornoN(m1.anno, m1.mese, 16), 'In attesa di validazione HR', 'Tirocinio di riqualifica OSS', '14:00', 4);
+  // un monte ore dell'anno precedente, non più attivo
+  nuovoMonte(lav('Giuseppe', 'Barbieri'), 'Riqualifica professionale', 30, { validoDal: `${m3.anno - 1}-01-01`, validoAl: `${m3.anno - 1}-12-31`, attivo: false, note: 'Percorso concluso' });
+
   // team di Marco Rossi: richieste in attesa con casi particolari
   const sofia = crea(lav('Sofia', 'Conti'), corso('SIC-SPE-12'), lavorativiFa(11), 'In attesa del coordinatore', { inviatoIl: istanteRoma(lavorativiFa(9), '18:00') });
   if (sofia) sofia.segnalataHR = true;
   crea(lav('Martina', 'Ferrara'), corso('AI-L2-08'), lavorativiFa(6), 'In attesa del coordinatore', { inviatoIl: istanteRoma(lavorativiFa(4), '17:30') });
-  crea(lav('Elisa', 'Costa'), corso('MMC-04'), lavorativiFa(2), 'In attesa del coordinatore', { senzaAttestato: true, inviatoIl: istanteRoma(lavorativiFa(1), '21:10') });
+  crea(lav('Elisa', 'Costa'), corso('MMC-04'), lavorativiFa(2), 'In attesa del coordinatore', { nonRetribuite: 1, inviatoIl: istanteRoma(lavorativiFa(1), '21:10') });
   const dataDup = lavorativiFa(8);
   const dupA = crea(lav('Matteo', 'Lombardi'), corso('COM-08'), dataDup, 'In attesa di validazione HR', { gettone: false });
   const matteo = lav('Matteo', 'Lombardi');
@@ -681,8 +783,7 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
       r.modificatoIl = dataFile;
       r.modificatoDa = login('Laura', 'Verdi');
     }
-    const totaleRet = arrotonda2(righe.reduce((s, x) => s + x.oreRetribuite, 0));
-    const totaleGet = arrotonda2(righe.reduce((s, x) => s + x.oreGettone, 0));
+    const totali = totaliPaghe(righe);
     chiusure.push({
       periodo: per,
       anno: m.anno,
@@ -691,8 +792,10 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
       dataChiusura,
       utenteChiusura: login('Laura', 'Verdi'),
       numeroRichieste: validate.length,
-      totaleOreRiconosciute: totaleRet,
-      totaleGettoni: totaleGet,
+      totaleOreRiconosciute: totali.oreRetribuite,
+      totaleGettoni: totali.oreGettone,
+      totaleOreNonRetribuite: totali.oreNonRetribuite,
+      totaleOrePermessi: totali.orePermessi,
       filePaghe: [
         {
           id: `fp-${per}-1`,
@@ -701,8 +804,10 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
           generatoIl: dataFile,
           generatoDa: login('Laura', 'Verdi'),
           righe: righe.length,
-          totaleOreRetribuite: totaleRet,
-          totaleOreGettone: totaleGet,
+          totaleOreRetribuite: totali.oreRetribuite,
+          totaleOreGettone: totali.oreGettone,
+          totaleOreNonRetribuite: totali.oreNonRetribuite,
+          totaleOrePermessi: totali.orePermessi,
           contenuto: generaCsvPaghe(righe),
         },
       ],
@@ -712,7 +817,7 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
     registro.push({ id: nuovoId('g'), data: dataChiusura, autore: login('Laura', 'Verdi'), ruolo: 'Formazione HR', azione: 'Chiusura del mese', entita: 'Chiusura', entitaId: per });
     notifica(dataFile, [EMAIL_PAGHE, EMAIL_HR], messaggi.filePaghe(per, nomeFilePaghe(per, 1), righe.length));
   }
-  chiusure.push({ periodo: periodoDi(m1.anno, m1.mese), anno: m1.anno, mese: m1.mese, stato: 'Aperto', numeroRichieste: 0, totaleOreRiconosciute: 0, totaleGettoni: 0, filePaghe: [], riaperture: [] });
+  chiusure.push({ periodo: periodoDi(m1.anno, m1.mese), anno: m1.anno, mese: m1.mese, stato: 'Aperto', numeroRichieste: 0, totaleOreRiconosciute: 0, totaleGettoni: 0, totaleOreNonRetribuite: 0, totaleOrePermessi: 0, filePaghe: [], riaperture: [] });
 
   // riepilogo del mese precedente già inviato (Flusso 5) se siamo oltre il 2 del mese
   if (Number(oggi.slice(8, 10)) >= 2) {
@@ -728,7 +833,7 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
         calcolaKPI(delMese),
         delMese.filter((r) => ['In attesa del coordinatore', 'Integrazione richiesta dal coordinatore', 'Integrazione richiesta da HR', 'In attesa di validazione HR'].includes(r.stato)),
         delMese.filter((r) => r.stato.startsWith('Respinta')),
-        delMese.filter((r) => !r.allegati.length && r.stato !== 'Annullata'),
+        delMese.filter((r) => r.possibileDuplicato && r.stato !== 'Annullata'),
       ),
     );
   }
@@ -743,6 +848,7 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
     strutture,
     lavoratori,
     corsi,
+    montiOre,
     richieste: richieste.sort((a, b) => b.creatoIl.localeCompare(a.creatoIl)),
     chiusure,
     registro,

@@ -1,6 +1,8 @@
 /**
  * Amministrazione (solo amministratori): lavoratori, organigramma, catalogo corsi, utenti e ruoli,
  * registro delle modifiche e, in modalità DEMO, strumenti dimostrativi.
+ * I monte ore dei permessi (diritto allo studio, riqualifica professionale) si gestiscono nella
+ * schermata «Monte ore permessi», disponibile anche all'Ufficio HR.
  * La scheda attiva è nell'indirizzo (#/amministrazione/<sezione>): si può aggiungere ai preferiti
  * e il pulsante "Indietro" del browser funziona.
  */
@@ -20,11 +22,11 @@ import '../../styles/gestione.css';
 type SezioneAdmin = 'lavoratori' | 'organigramma' | 'catalogo' | 'ruoli' | 'registro' | 'demo';
 
 const DESCRIZIONI: Record<SezioneAdmin, string> = {
-  lavoratori: 'Anagrafica dei lavoratori, assegnazione alla struttura e al coordinatore, segnalazioni di variazione.',
+  lavoratori: 'Anagrafica dei lavoratori, assegnazione alla struttura e al coordinatore, segnalazioni di variazione inviate da lavoratori e coordinatori.',
   organigramma: 'Aree, servizi e centri di costo con i rispettivi coordinatori.',
-  catalogo: 'Corsi a catalogo e validazione dei corsi esterni inseriti dai lavoratori.',
+  catalogo: 'Corsi a catalogo e validazione dei corsi esterni inseriti dai lavoratori. In fase 2 il catalogo sarà sincronizzato da Zucchetti.',
   ruoli: 'Ruoli Formazione HR e Amministratore; elenco dei coordinatori dall’organigramma.',
-  registro: 'Storico di tutte le variazioni effettuate da coordinatori, HR, amministratori e dal sistema.',
+  registro: 'Storico di tutte le variazioni effettuate da lavoratori, coordinatori, HR, amministratori e dal sistema.',
   demo: 'Strumenti della modalità dimostrativa.',
 };
 

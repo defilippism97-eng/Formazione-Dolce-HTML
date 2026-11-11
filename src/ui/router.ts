@@ -15,6 +15,7 @@ export const ROTTE = {
   validazione: '/validazione',
   riepilogo: '/riepilogo',
   chiusura: '/chiusura',
+  permessi: '/permessi',
   amministrazione: (sezione = 'lavoratori') => `/amministrazione/${sezione}`,
   posta: '/posta',
 } as const;

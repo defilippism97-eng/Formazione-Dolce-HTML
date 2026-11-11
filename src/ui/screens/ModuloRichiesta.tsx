@@ -1,8 +1,13 @@
 /**
- * Schermata 3 – Nuova richiesta di riconoscimento delle ore di formazione
- * (anche modifica di una bozza o di una richiesta per cui è stata chiesta un'integrazione).
+ * Schermata 3 – Nuova richiesta (anche modifica di una bozza o di una richiesta per cui è
+ * stata chiesta un'integrazione).
  *
- * Sezioni: dati del lavoratore (sola lettura), attività formativa, allegati, dichiarazioni.
+ * Cosa si può rendicontare:
+ *  - Formazione: si parte dal catalogo di Società Dolce (ente erogatore = Datore di lavoro);
+ *    se il corso non è a catalogo è un corso esterno (Committente o altro soggetto);
+ *  - Diritto allo studio / Riqualifica professionale: solo per i lavoratori a cui l'Ufficio HR
+ *    ha assegnato un monte ore; le ore richieste si scalano dal monte ore fino a esaurimento.
+ *
  * I controlli sono gli stessi del server (`validaRichiesta`): qui servono solo a dare
  * messaggi immediati, il backend li ripete sempre.
  */
@@ -13,13 +18,17 @@ import {
   ANNULLABILI_DAL_LAVORATORE,
   arrotonda2,
   calcolaOre,
+  consumoMonteOre,
   isDataValida,
   MAX_LUNGHEZZA_NOTE,
+  MAX_PAUSA_MINUTI,
   MODALITA,
   MODIFICABILI_DAL_LAVORATORE,
   nomeMese,
   oggiRoma,
   sessioniGiaDichiarate,
+  TIPI_PERMESSO,
+  titoloRichiesta,
   trovaDuplicati,
   validaRichiesta,
   type Allegato,
@@ -28,26 +37,32 @@ import {
   type Corso,
   type ErroreValidazione,
   type Richiesta,
+  type SituazioneMonteOre,
   type StatoRichiesta,
+  type Tipologia,
 } from '../../domain';
-import { Avviso, CampoArea, CampoLettura, CampoSelezione, CampoTesto, Caricamento, Casella, ErroreCaricamento, Griglia, Pagina, Pulsante, Scheda } from '../components/ui';
+import { Avviso, BarraMonteOre, CampoArea, CampoLettura, CampoSelezione, CampoTesto, Caricamento, Casella, ErroreCaricamento, Griglia, Pagina, Pulsante, Scheda } from '../components/ui';
 import { useApp, useConferma, useMessaggi } from '../contesto';
 import * as f from '../format';
 import { useAzione, useCarica } from '../hooks';
 import { naviga, ROTTE } from '../router';
 import { SezioneAllegati, type FileNuovo } from './lavoratore/CaricaAllegati';
-import { focusPrimoErrore, isMeseChiuso, sostituisciPercorso, testoNumero, titoloCorso } from './lavoratore/comuni';
+import { focusPrimoErrore, isMeseChiuso, sostituisciPercorso, testoNumero } from './lavoratore/comuni';
+import { Ripartizione } from './lavoratore/Ripartizione';
 import { SelettoreCorso } from './lavoratore/SelettoreCorso';
 import {
   corsoDaRichiesta,
   DATORE,
   ESTERNO,
   inputDaStato,
+  moduloPermesso,
   moduloVuoto,
   numeroCampo,
+  presenzaParziale,
   statoDaRichiesta,
   storicoCon,
   validaCompilazione,
+  type OrigineCorso,
   type SceltaEsterno,
   type StatoModulo,
 } from './lavoratore/statoModulo';
@@ -62,7 +77,8 @@ interface DatiModulo {
 
 /** Ordine dei campi nel modulo: il riepilogo degli errori li elenca nello stesso ordine. */
 const ORDINE_CAMPI = [
-  'ente',
+  'tipologia',
+  'descrizioneAttivita',
   'corsoId',
   'nuovoCorso.titolo',
   'nuovoCorso.modalita',
@@ -71,10 +87,14 @@ const ORDINE_CAMPI = [
   'dataSessione',
   'oraInizioSessione',
   'oraFineSessione',
+  'pausaPrevista',
+  'pausaMinuti',
   'oraIngresso',
   'oraUscita',
+  'pausaInPresenza',
   'oreRetribuiteRichieste',
   'oreGettoneRichieste',
+  'oreNonRetribuiteRichieste',
   'noteLavoratore',
   'allegati',
   'dichiarazioni.partecipazione',
@@ -92,6 +112,12 @@ const posizioneCampo = (c: string) => {
 const CAMPI_SENZA_INPUT: ReadonlySet<string> = new Set(['coordinatore', 'profilo', 'allegati']);
 
 const INTEGRAZIONE: ReadonlySet<StatoRichiesta> = new Set<StatoRichiesta>(['Integrazione richiesta dal coordinatore', 'Integrazione richiesta da HR']);
+
+const DESCRIZIONE_TIPOLOGIA: Record<Tipologia, string> = {
+  Formazione: 'Un corso di Società Dolce oppure di un altro ente',
+  'Diritto allo studio': 'Permesso per lezioni, esami o tirocini: le ore si scalano dal tuo monte ore',
+  'Riqualifica professionale': 'Permesso per il percorso di riqualifica: le ore si scalano dal tuo monte ore',
+};
 
 export function ModuloRichiesta({ id }: { id?: string }) {
   const { backend } = useApp();
@@ -145,7 +171,7 @@ export function ModuloRichiesta({ id }: { id?: string }) {
 
 function NonModificabile({ r, meseChiuso }: { r: Richiesta; meseChiuso: boolean }) {
   return (
-    <Pagina titolo={`Richiesta ${r.numero}`} sottotitolo={titoloCorso(r)}>
+    <Pagina titolo={`Richiesta ${r.numero}`} sottotitolo={titoloRichiesta(r)}>
       <Avviso tono="info" titolo="Questa richiesta non si può modificare">
         {meseChiuso
           ? `Il mese di ${nomeMese(r.meseCompetenza)} ${r.annoCompetenza} è stato chiuso dall’Ufficio HR/Formazione: per correzioni rivolgiti a loro.`
@@ -174,6 +200,8 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
   const oggi = useMemo(() => oggiRoma(), []);
   const rifModulo = useRef<HTMLFormElement>(null);
   const rifRiepilogo = useRef<HTMLDivElement>(null);
+  /** Dopo il passaggio catalogo <-> corso esterno il fuoco va sul primo campo della nuova sezione. */
+  const fuocoOrigine = useRef(false);
 
   /** Richiesta già salvata sul server (dopo il primo salvataggio un secondo clic la aggiorna, non ne crea un'altra). */
   const [salvata, setSalvata] = useState<Pick<Richiesta, 'id' | 'numero' | 'stato'> | undefined>(() =>
@@ -202,6 +230,16 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
     return () => window.removeEventListener('beforeunload', avvisa);
   }, [sporco]);
 
+  useEffect(() => {
+    if (!fuocoOrigine.current) return;
+    fuocoOrigine.current = false;
+    const bersaglio =
+      m.origineCorso === 'catalogo'
+        ? rifModulo.current?.querySelector<HTMLElement>('.selettore-corso input, .corso-scelto button')
+        : rifModulo.current?.querySelector<HTMLElement>('input[name="scelta-esterno"]:checked, input[name="scelta-esterno"]:not(:disabled)');
+    bersaglio?.focus();
+  }, [m.origineCorso]);
+
   const modificato = () => {
     setSporco(true);
     if (azione.erroriCampi.length) azione.setErroriCampi([]);
@@ -220,16 +258,41 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
     });
     modificato();
   };
+  const cambiaOrigine = (origine: OrigineCorso) => {
+    fuocoOrigine.current = true;
+    imposta('origineCorso', origine);
+  };
   const tocca = (campo: string) => setToccati((t) => (t.has(campo) ? t : new Set(t).add(campo)));
 
+  // --- cosa si rendiconta
+  const p = dati.profilo;
+  const permesso = moduloPermesso(m);
+  /** Permessi per cui HR ha assegnato al lavoratore un monte ore attivo. */
+  const permessiAttivi = useMemo(() => TIPI_PERMESSO.filter((t) => p.monteOre.some((x) => x.tipo === t && x.attivo)), [p.monteOre]);
+  const tipologie: Tipologia[] = ['Formazione', ...permessiAttivi];
+  /** La tipologia di una richiesta già salvata non si può cambiare (lo impone il server). */
+  const tipologiaBloccata = !!salvata;
+
   // --- corso scelto e valori calcolati
-  const corsoCatalogo = m.ente === DATORE ? dati.catalogo.find((c) => c.id === m.corsoCatalogoId) : undefined;
-  const corsoStorico = m.ente === ESTERNO && m.sceltaEsterno === 'storico' ? storico.find((c) => c.id === m.corsoStoricoId) : undefined;
+  const esterno = !permesso && m.origineCorso === 'esterno';
+  const corsoCatalogo = !permesso && m.origineCorso === 'catalogo' ? dati.catalogo.find((c) => c.id === m.corsoCatalogoId) : undefined;
+  const corsoStorico = esterno && m.sceltaEsterno === 'storico' ? storico.find((c) => c.id === m.corsoStoricoId) : undefined;
   const corso = corsoCatalogo ?? corsoStorico ?? null;
   const gettoneNonPrevisto = corso?.gettonePrevisto === false;
   const input = useMemo(() => inputDaStato(m, gettoneNonPrevisto), [m, gettoneNonPrevisto]);
   const { durataSessione, oreFrequentate } = calcolaOre(input);
   const altre = useMemo(() => dati.mie.filter((r) => r.id !== salvata?.id), [dati.mie, salvata?.id]);
+  const parziale = presenzaParziale(m);
+
+  // --- monte ore del permesso valido per la data indicata (se la data manca: quello valido oggi)
+  const monte = useMemo<SituazioneMonteOre | null>(() => {
+    if (!permesso) return null;
+    const delTipo = p.monteOre.filter((x) => x.tipo === m.tipologia && x.attivo);
+    const perData = (d: string) => delTipo.find((x) => d >= x.validoDal && d <= x.validoAl);
+    return (isDataValida(m.dataSessione) ? perData(m.dataSessione) : perData(oggi)) ?? delTipo[0] ?? null;
+  }, [permesso, p.monteOre, m.tipologia, m.dataSessione, oggi]);
+  /** Ore ancora disponibili senza contare la richiesta che si sta modificando. */
+  const residuoMonte = useMemo(() => (monte ? consumoMonteOre(monte, dati.mie, salvata?.id).oreResidue : 0), [monte, dati.mie, salvata?.id]);
 
   const ctx = useMemo<ContestoValidazione>(
     () => ({
@@ -240,10 +303,11 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
       coordinatoreLogin: dati.profilo.coordinatoreEmail ?? dati.profilo.coordinatoreNome,
       profiloCompleto: sessione.profiloCompleto,
       oggi,
+      monteOre: permesso ? (monte ? { oreResidue: residuoMonte, validoDal: monte.validoDal, validoAl: monte.validoAl } : null) : undefined,
     }),
-    [sessione, corso, altre, dati.chiusure, dati.profilo, oggi],
+    [sessione, corso, altre, dati.chiusure, dati.profilo, oggi, permesso, monte, residuoMonte],
   );
-  const controlla = (perInvio: boolean): ErroreValidazione[] => [...validaCompilazione(m, gettoneNonPrevisto), ...validaRichiesta(input, ctx, perInvio)];
+  const controlla = (perInvio: boolean): ErroreValidazione[] => [...validaCompilazione(m, gettoneNonPrevisto, perInvio), ...validaRichiesta(input, ctx, perInvio)];
   const erroriLive = useMemo(() => controlla(verifica === 'invia'), [m, gettoneNonPrevisto, input, ctx, verifica]); // eslint-disable-line react-hooks/exhaustive-deps
   const erroreDi = (campo: string): string | undefined =>
     ((verifica || toccati.has(campo)) && erroriLive.find((e) => e.campo === campo)?.messaggio) || azione.erroreDi(campo);
@@ -255,7 +319,7 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
 
   const duplicati =
     corso && isDataValida(m.dataSessione)
-      ? trovaDuplicati({ login: sessione.login, codiceCorso: corso.codice, dataSessione: m.dataSessione, id: salvata?.id }, dati.mie)
+      ? trovaDuplicati({ login: sessione.login, codiceCorso: corso.codice, dataSessione: m.dataSessione, id: salvata?.id, tipologia: m.tipologia }, dati.mie)
       : [];
   const integrazione = richiesta && INTEGRAZIONE.has(richiesta.stato) && salvata?.stato === richiesta.stato ? richiesta : undefined;
   const annullabile = !!salvata && ANNULLABILI_DAL_LAVORATORE.has(salvata.stato);
@@ -272,7 +336,8 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
     const daInviare: SalvaRichiestaInput = {
       ...input,
       id: salvata?.id,
-      allegatiNuovi: nuovi.map((n) => ({ tipo: n.tipo, nome: n.file.name, mime: n.mime, contenuto: n.file })),
+      // l'attestato si allega solo per i corsi esterni
+      allegatiNuovi: nuovi.filter((n) => esterno || n.tipo !== 'Attestato').map((n) => ({ tipo: n.tipo, nome: n.file.name, mime: n.mime, contenuto: n.file })),
       allegatiRimossi: rimossi,
     };
     setInCorso(tipo);
@@ -308,10 +373,10 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
     setRimossi([]);
     setNuovi([]);
     // il corso esterno nuovo è stato creato dal server: d'ora in poi si usa quello (niente doppioni)
-    if (m.ente === ESTERNO && m.sceltaEsterno === 'nuovo' && r.corsoId) {
+    if (esterno && m.sceltaEsterno === 'nuovo' && r.corsoId) {
       const creato = corsoDaRichiesta(r, sessione.login);
       setStorico((s) => [...s.filter((c) => c.id !== creato.id), creato]);
-      setM((p) => ({ ...p, sceltaEsterno: 'storico', corsoStoricoId: creato.id }));
+      setM((prec) => ({ ...prec, sceltaEsterno: 'storico', corsoStoricoId: creato.id }));
     }
   };
 
@@ -354,12 +419,65 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
     el.scrollIntoView({ block: 'center', behavior: 'smooth' });
   };
 
-  const p = dati.profilo;
   const titoloPagina = salvata ? (salvata.stato === 'Bozza' ? `Bozza ${salvata.numero}` : `Modifica richiesta ${salvata.numero}`) : 'Nuova richiesta';
-  const titoloPrecedente = richiesta && richiesta.ente === DATORE && !dati.catalogo.some((c) => c.id === richiesta.corsoId) ? titoloCorso(richiesta) : undefined;
+  const titoloPrecedente =
+    richiesta && richiesta.tipologia === 'Formazione' && richiesta.ente !== ESTERNO && !dati.catalogo.some((c) => c.id === richiesta.corsoId) ? titoloRichiesta(richiesta) : undefined;
+  const mostraTipologia = permessiAttivi.length > 0 || permesso;
+  let numeroSezione = 0;
+  const sezione = (titolo: string) => `${++numeroSezione}. ${titolo}`;
+
+  // --- parti comuni a formazione e permessi
+  const campiPausa = (
+    <>
+      <GruppoRadio etichetta="Era prevista una pausa?" obbligatorio errore={erroreDi('pausaPrevista')} inLinea aiuto="Ad esempio la pausa pranzo: non conta tra le ore.">
+        <SchedaRadio
+          name="pausa-prevista"
+          valore="si"
+          scelto={m.pausaPrevista}
+          onScegli={(v) => imposta('pausaPrevista', v)}
+          titolo="Sì"
+          campo="pausaPrevista"
+          invalido={!!erroreDi('pausaPrevista')}
+        />
+        <SchedaRadio name="pausa-prevista" valore="no" scelto={m.pausaPrevista} onScegli={(v) => imposta('pausaPrevista', v)} titolo="No" />
+      </GruppoRadio>
+      {m.pausaPrevista === 'si' && (
+        <CampoTesto
+          etichetta="Durata della pausa (minuti)"
+          obbligatorio
+          inputMode="numeric"
+          autoComplete="off"
+          placeholder="Es. 60"
+          value={m.pausaMinuti}
+          onChange={(e) => imposta('pausaMinuti', e.target.value)}
+          aiuto={`Da 5 a ${MAX_PAUSA_MINUTI} minuti (un’ora = 60).`}
+          {...campo('pausaMinuti')}
+        />
+      )}
+    </>
+  );
+
+  const campoNote = (
+    <CampoArea
+      etichetta="Note"
+      value={m.note}
+      maxLength={MAX_LUNGHEZZA_NOTE}
+      onChange={(e) => imposta('note', e.target.value)}
+      placeholder={permesso ? 'Es. sede dell’esame, università o ente, altre informazioni utili…' : 'Es. sede del corso, docente, motivo dell’uscita anticipata…'}
+      aiuto={`${m.note.length}/${MAX_LUNGHEZZA_NOTE} caratteri. Le legge il coordinatore.`}
+      {...campo('noteLavoratore')}
+    />
+  );
 
   return (
-    <Pagina titolo={titoloPagina} sottotitolo="Richiesta di riconoscimento delle ore di formazione. I campi con * sono obbligatori per l’invio.">
+    <Pagina
+      titolo={titoloPagina}
+      sottotitolo={
+        permesso
+          ? `Richiesta di ore di permesso per ${m.tipologia.toLowerCase()}. I campi con * sono obbligatori per l’invio.`
+          : 'Richiesta di riconoscimento delle ore di formazione. I campi con * sono obbligatori per l’invio.'
+      }
+    >
       {integrazione && (
         <Avviso tono="avviso" titolo={integrazione.stato === 'Integrazione richiesta da HR' ? 'L’Ufficio HR/Formazione chiede un’integrazione' : 'Il coordinatore chiede un’integrazione'}>
           {(integrazione.stato === 'Integrazione richiesta da HR' ? integrazione.noteHR : integrazione.noteCoordinatore) && (
@@ -370,8 +488,8 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
       )}
 
       <form ref={rifModulo} className="modulo-richiesta" noValidate onSubmit={(e) => e.preventDefault()} aria-label={titoloPagina}>
-        {/* ---------------------------------------------------------------- 1 */}
-        <Scheda titolo="1. Dati del lavoratore" icona="utente">
+        {/* ------------------------------------------------- dati del lavoratore */}
+        <Scheda titolo={sezione('Dati del lavoratore')} icona="utente">
           <Griglia colonne={3}>
             <CampoLettura etichetta="Nome e cognome" valore={`${p.nome} ${p.cognome}`} />
             <CampoLettura etichetta="E-mail di contatto" valore={p.emailContatto} />
@@ -394,238 +512,364 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
           </p>
         </Scheda>
 
-        {/* ---------------------------------------------------------------- 2 */}
-        <Scheda titolo="2. Attività formativa" icona="file">
-          <div className="sezione-modulo">
-            <h3>Corso</h3>
-            <GruppoRadio etichetta="Ente erogatore" obbligatorio errore={erroreDi('ente')}>
-              <SchedaRadio
-                name="ente"
-                valore={DATORE}
-                scelto={m.ente}
-                onScegli={(v) => imposta('ente', v)}
-                titolo="Datore di lavoro"
-                descrizione="Corso a catalogo organizzato da Società Dolce"
-                campo="ente"
-                invalido={!!erroreDi('ente')}
-              />
-              <SchedaRadio
-                name="ente"
-                valore={ESTERNO}
-                scelto={m.ente}
-                onScegli={(v) => imposta('ente', v)}
-                titolo="Committente o altro soggetto"
-                descrizione="Corso esterno: Regione, AUSL, Comune, committente o altro ente"
-              />
-            </GruppoRadio>
-
-            {m.ente === DATORE && (
+        {/* ------------------------------------------------- cosa si rendiconta */}
+        {mostraTipologia && (
+          <Scheda titolo={sezione('Cosa vuoi rendicontare?')} icona="lista">
+            {tipologiaBloccata ? (
               <>
-                <SelettoreCorso
-                  catalogo={dati.catalogo}
-                  valore={m.corsoCatalogoId}
-                  onCambia={(idCorso) => imposta('corsoCatalogoId', idCorso)}
-                  errore={erroreDi('corsoId')}
-                  titoloPrecedente={titoloPrecedente}
-                />
-                {corsoCatalogo && <DettagliCorso corso={corsoCatalogo} />}
-              </>
-            )}
-
-            {m.ente === ESTERNO && (
-              <>
-                <GruppoRadio etichetta="Il corso è…">
-                  <SchedaRadio
-                    name="scelta-esterno"
-                    valore="storico"
-                    scelto={m.sceltaEsterno}
-                    onScegli={(v: SceltaEsterno) => imposta('sceltaEsterno', v)}
-                    titolo="Già inserito (storico)"
-                    descrizione={storico.length ? `Un corso su più giornate che hai già dichiarato (${storico.length} nel tuo storico)` : 'Il tuo storico è ancora vuoto'}
-                    disabled={!storico.length}
-                  />
-                  <SchedaRadio
-                    name="scelta-esterno"
-                    valore="nuovo"
-                    scelto={m.sceltaEsterno}
-                    onScegli={(v: SceltaEsterno) => imposta('sceltaEsterno', v)}
-                    titolo="Nuovo corso"
-                    descrizione="Inserisci titolo, ente, modalità e durata"
-                  />
-                </GruppoRadio>
-                {m.sceltaEsterno === 'storico' ? (
-                  <>
-                    <CampoSelezione
-                      etichetta="Corso dal tuo storico"
-                      obbligatorio
-                      value={m.corsoStoricoId}
-                      onChange={(e) => imposta('corsoStoricoId', e.target.value)}
-                      vuota="Seleziona un corso…"
-                      opzioni={storico.map((c) => ({ valore: c.id, etichetta: `${c.titolo} (${c.codice})` }))}
-                      aiuto="Nello storico trovi i corsi esterni su più giornate che hai già inserito."
-                      {...campo('corsoId')}
-                    />
-                    {corsoStorico && <DettagliCorso corso={corsoStorico} />}
-                  </>
-                ) : (
-                  <Griglia colonne={2}>
-                    <CampoTesto
-                      etichetta="Titolo del corso"
-                      className="span-2"
-                      obbligatorio
-                      maxLength={200}
-                      placeholder="Es. Convegno regionale sui servizi 0-6"
-                      value={m.nuovoTitolo}
-                      onChange={(e) => imposta('nuovoTitolo', e.target.value)}
-                      {...campo('nuovoCorso.titolo')}
-                    />
-                    <CampoTesto
-                      etichetta="Ente che ha organizzato il corso"
-                      maxLength={200}
-                      placeholder="Es. AUSL di Bologna"
-                      value={m.nuovoNomeEnte}
-                      onChange={(e) => imposta('nuovoNomeEnte', e.target.value)}
-                    />
-                    <CampoSelezione
-                      etichetta="Modalità di svolgimento"
-                      obbligatorio
-                      value={m.nuovaModalita}
-                      onChange={(e) => imposta('nuovaModalita', e.target.value as StatoModulo['nuovaModalita'])}
-                      vuota="Seleziona…"
-                      opzioni={MODALITA.map((x) => ({ valore: x, etichetta: x }))}
-                      {...campo('nuovoCorso.modalita')}
-                    />
-                    <CampoTesto
-                      etichetta="Durata complessiva del corso (ore)"
-                      obbligatorio
-                      inputMode="decimal"
-                      autoComplete="off"
-                      placeholder="Es. 16"
-                      value={m.nuovaDurata}
-                      onChange={(e) => imposta('nuovaDurata', e.target.value)}
-                      aiuto="Tutte le giornate del corso, non solo questa sessione."
-                      {...campo('nuovoCorso.durataOre')}
-                    />
-                    <GruppoRadio etichetta="Previste più giornate formative?" obbligatorio errore={erroreDi('nuovoCorso.piuGiornate')} inLinea>
-                      <SchedaRadio
-                        name="piu-giornate"
-                        valore="si"
-                        scelto={m.nuovoPiuGiornate}
-                        onScegli={(v) => imposta('nuovoPiuGiornate', v)}
-                        titolo="Sì"
-                        campo="nuovoCorso.piuGiornate"
-                        invalido={!!erroreDi('nuovoCorso.piuGiornate')}
-                      />
-                      <SchedaRadio name="piu-giornate" valore="no" scelto={m.nuovoPiuGiornate} onScegli={(v) => imposta('nuovoPiuGiornate', v)} titolo="No" />
-                    </GruppoRadio>
-                    <CampoLettura etichetta="Codice univoco del corso" valore={<span className="testo-secondario">Generato automaticamente al salvataggio</span>} />
-                    <p className="testo-piccolo testo-secondario span-2 nota-corso-nuovo">
-                      Il codice (EXT-…) si crea la prima volta che salvi. Se il corso prevede più giornate, nelle richieste successive lo ritrovi nello storico.
-                    </p>
-                  </Griglia>
+                <Griglia colonne={3}>
+                  <CampoLettura etichetta="Tipologia" valore={m.tipologia} />
+                </Griglia>
+                <p className="testo-piccolo testo-secondario nota-sotto">
+                  La tipologia di una richiesta già salvata non si può cambiare: se è sbagliata, annulla la richiesta e creane una nuova.
+                </p>
+                {erroreDi('tipologia') && (
+                  <span className="campo-messaggio-errore" role="alert">
+                    {erroreDi('tipologia')}
+                  </span>
                 )}
               </>
+            ) : (
+              <GruppoRadio etichetta="Tipologia" obbligatorio errore={erroreDi('tipologia')} aiuto="Oltre alla formazione vedi solo i permessi che l’Ufficio HR/Formazione ha attivato per te.">
+                {tipologie.map((t, i) => (
+                  <SchedaRadio
+                    key={t}
+                    name="tipologia"
+                    valore={t}
+                    scelto={m.tipologia}
+                    onScegli={(v) => imposta('tipologia', v)}
+                    titolo={t}
+                    descrizione={DESCRIZIONE_TIPOLOGIA[t]}
+                    campo={i === 0 ? 'tipologia' : undefined}
+                    invalido={!!erroreDi('tipologia')}
+                  />
+                ))}
+              </GruppoRadio>
             )}
-          </div>
+          </Scheda>
+        )}
 
-          <div className="sezione-modulo">
-            <h3>Sessione e presenza</h3>
-            <Griglia colonne={3}>
-              <CampoTesto
-                etichetta="Data della sessione"
-                type="date"
-                max={oggi}
-                obbligatorio
-                value={m.dataSessione}
-                onChange={(e) => imposta('dataSessione', e.target.value)}
-                aiuto="Non può essere nel futuro né in un mese già chiuso."
-                {...campo('dataSessione')}
-              />
-            </Griglia>
-            <Griglia colonne={3}>
-              <CampoTesto etichetta="Ora inizio sessione" type="time" step={300} obbligatorio value={m.oraInizioSessione} onChange={(e) => impostaOrario('oraInizioSessione', e.target.value)} {...campo('oraInizioSessione')} />
-              <CampoTesto etichetta="Ora fine sessione" type="time" step={300} obbligatorio value={m.oraFineSessione} onChange={(e) => impostaOrario('oraFineSessione', e.target.value)} {...campo('oraFineSessione')} />
-              <CampoLettura etichetta="Durata della sessione" valore={<Calcolato ore={durataSessione} />} />
-              <CampoTesto
-                etichetta="Ora di ingresso"
-                type="time"
-                step={300}
-                obbligatorio
-                value={m.oraIngresso}
-                onChange={(e) => impostaOrario('oraIngresso', e.target.value)}
-                aiuto="Quando sei entrato/a: cambiala se sei arrivato/a dopo l’inizio."
-                {...campo('oraIngresso')}
-              />
-              <CampoTesto
-                etichetta="Ora di uscita"
-                type="time"
-                step={300}
-                obbligatorio
-                value={m.oraUscita}
-                onChange={(e) => impostaOrario('oraUscita', e.target.value)}
-                aiuto="Quando sei uscito/a: cambiala se sei uscito/a prima della fine."
-                {...campo('oraUscita')}
-              />
-              <CampoLettura etichetta="Ore frequentate" valore={<Calcolato ore={oreFrequentate} />} />
-            </Griglia>
-            {duplicati.length > 0 && (
-              <Avviso tono="avviso" titolo="Hai già una richiesta per questo corso in questa data">
-                {duplicati.map((d) => d.numero).join(', ')}. Se è un’altra sessione dello stesso giorno puoi procedere: all’invio ti verrà chiesta una conferma.
-              </Avviso>
-            )}
-            {corso && <OreCorso corso={corso} altre={altre} durataSessione={durataSessione} />}
-          </div>
+        {permesso ? (
+          <>
+            {/* ----------------------------------------------------- permesso */}
+            <Scheda titolo={sezione(`Permesso – ${m.tipologia}`)} icona="orologio">
+              <div className="sezione-modulo">
+                <h3>Attività</h3>
+                <CampoTesto
+                  etichetta="Descrizione dell’attività"
+                  obbligatorio
+                  maxLength={200}
+                  placeholder={m.tipologia === 'Diritto allo studio' ? 'Es. Esame di Pedagogia generale – Università di Bologna' : 'Es. Lezione del corso di riqualifica OSS – modulo 3'}
+                  value={m.descrizioneAttivita}
+                  onChange={(e) => imposta('descrizioneAttivita', e.target.value)}
+                  aiuto="Che cosa hai fatto con questo permesso: lezione, esame, tirocinio…"
+                  {...campo('descrizioneAttivita')}
+                />
+              </div>
 
-          <div className="sezione-modulo">
-            <h3>Ore richieste e note</h3>
-            <Griglia colonne={3}>
-              <CampoTesto
-                etichetta="Ore retribuite richieste"
-                inputMode="decimal"
-                autoComplete="off"
-                placeholder="0"
-                value={m.oreRetribuite}
-                onChange={(e) => imposta('oreRetribuite', e.target.value)}
-                {...campo('oreRetribuiteRichieste')}
-              />
-              <CampoTesto
-                etichetta="Ore gettone richieste"
-                inputMode="decimal"
-                autoComplete="off"
-                placeholder="0"
-                disabled={gettoneNonPrevisto}
-                value={gettoneNonPrevisto ? '0' : m.oreGettone}
-                onChange={(e) => imposta('oreGettone', e.target.value)}
-                aiuto={gettoneNonPrevisto ? 'Per questo corso il gettone non è previsto.' : undefined}
-                {...campo('oreGettoneRichieste')}
-              />
-              <CampoLettura etichetta="Totale richiesto" valore={<TotaleRichiesto ret={m.oreRetribuite} get={gettoneNonPrevisto ? '0' : m.oreGettone} frequentate={oreFrequentate} />} />
-            </Griglia>
-            <p className="testo-piccolo testo-secondario">
-              Ore retribuite + ore gettone non possono superare le ore frequentate. Per i decimali usa la virgola (1,5 = un’ora e mezza).
-              {oreFrequentate !== null && oreFrequentate > 0 && !m.oreRetribuite.trim() && !m.oreGettone.trim() && (
-                <>
-                  {' '}
-                  <button type="button" className="link-testo" onClick={() => imposta('oreRetribuite', testoNumero(oreFrequentate))}>
-                    Richiedi tutte le {f.numero(oreFrequentate)} ore come retribuite
-                  </button>
-                </>
+              <div className="sezione-modulo">
+                <h3>Data e orario</h3>
+                <Griglia colonne={3}>
+                  <CampoTesto
+                    etichetta="Data del permesso"
+                    type="date"
+                    max={oggi}
+                    obbligatorio
+                    value={m.dataSessione}
+                    onChange={(e) => imposta('dataSessione', e.target.value)}
+                    aiuto="Non può essere nel futuro, in un mese già chiuso o fuori dal periodo del monte ore."
+                    {...campo('dataSessione')}
+                  />
+                  <CampoTesto etichetta="Ora di inizio" type="time" step={300} obbligatorio value={m.oraInizioSessione} onChange={(e) => impostaOrario('oraInizioSessione', e.target.value)} {...campo('oraInizioSessione')} />
+                  <CampoTesto etichetta="Ora di fine" type="time" step={300} obbligatorio value={m.oraFineSessione} onChange={(e) => impostaOrario('oraFineSessione', e.target.value)} {...campo('oraFineSessione')} />
+                </Griglia>
+                <Griglia colonne={3}>
+                  {campiPausa}
+                  <CampoLettura etichetta="Ore di permesso richieste" valore={<Calcolato ore={oreFrequentate} />} />
+                </Griglia>
+              </div>
+
+              <div className="sezione-modulo">
+                <h3>Il tuo monte ore</h3>
+                <RiquadroMonteOre monte={monte} tipologia={m.tipologia} residuo={residuoMonte} richieste={oreFrequentate} />
+              </div>
+
+              <div className="sezione-modulo">
+                <h3>Note</h3>
+                {campoNote}
+              </div>
+            </Scheda>
+          </>
+        ) : (
+          <>
+            {/* -------------------------------------------------------- corso */}
+            <Scheda titolo={sezione('Corso')} icona="file">
+              {m.origineCorso === 'catalogo' ? (
+                <div className="sezione-modulo">
+                  <SelettoreCorso catalogo={dati.catalogo} valore={m.corsoCatalogoId} onCambia={(idCorso) => imposta('corsoCatalogoId', idCorso)} errore={erroreDi('corsoId')} titoloPrecedente={titoloPrecedente} />
+                  {corsoCatalogo ? (
+                    <DettagliCorso corso={corsoCatalogo} />
+                  ) : (
+                    <div className="origine-corso">
+                      <div>
+                        <strong>Non trovi il corso nel catalogo?</strong>
+                        <p>Allora è un corso esterno (organizzato da un committente o da un altro ente).</p>
+                      </div>
+                      <Pulsante variante="secondario" icona="aggiungi" onClick={() => cambiaOrigine('esterno')}>
+                        Inserisci un corso esterno
+                      </Pulsante>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="sezione-modulo">
+                  <div className="origine-corso origine-corso-esterno">
+                    <div>
+                      <span className="testatina">Corso esterno</span>
+                      <p>
+                        Ente erogatore: <strong>{ESTERNO}</strong> (Regione, AUSL, Comune, committente o altro ente). Il corso non è nel catalogo di Società Dolce.
+                      </p>
+                    </div>
+                    <Pulsante variante="secondario" icona="indietro" onClick={() => cambiaOrigine('catalogo')}>
+                      Torna al catalogo di Società Dolce
+                    </Pulsante>
+                  </div>
+
+                  <GruppoRadio etichetta="Quale corso esterno?" obbligatorio>
+                    <SchedaRadio
+                      name="scelta-esterno"
+                      valore="storico"
+                      scelto={m.sceltaEsterno}
+                      onScegli={(v: SceltaEsterno) => imposta('sceltaEsterno', v)}
+                      titolo="Un corso esterno che hai già inserito"
+                      descrizione={
+                        storico.length
+                          ? `Per aggiungere un’altra giornata dello stesso corso (${storico.length === 1 ? '1 corso disponibile' : `${storico.length} corsi disponibili`})`
+                          : 'Per aggiungere un’altra giornata dello stesso corso: non ne hai ancora inseriti'
+                      }
+                      disabled={!storico.length}
+                    />
+                    <SchedaRadio
+                      name="scelta-esterno"
+                      valore="nuovo"
+                      scelto={m.sceltaEsterno}
+                      onScegli={(v: SceltaEsterno) => imposta('sceltaEsterno', v)}
+                      titolo="Un nuovo corso esterno"
+                      descrizione="Inserisci titolo, ente, modalità e durata"
+                    />
+                  </GruppoRadio>
+
+                  {m.sceltaEsterno === 'storico' ? (
+                    <>
+                      <CampoSelezione
+                        etichetta="Corso esterno già inserito"
+                        obbligatorio
+                        value={m.corsoStoricoId}
+                        onChange={(e) => imposta('corsoStoricoId', e.target.value)}
+                        vuota="Seleziona un corso…"
+                        opzioni={storico.map((c) => ({ valore: c.id, etichetta: `${c.titolo} (${c.codice})` }))}
+                        aiuto="Qui trovi i corsi esterni su più giornate che hai inserito nelle richieste precedenti: scegline uno per dichiarare un’altra giornata."
+                        {...campo('corsoId')}
+                      />
+                      {corsoStorico && <DettagliCorso corso={corsoStorico} />}
+                    </>
+                  ) : (
+                    <Griglia colonne={2}>
+                      <CampoTesto
+                        etichetta="Titolo del corso"
+                        className="span-2"
+                        obbligatorio
+                        maxLength={200}
+                        placeholder="Es. Convegno regionale sui servizi 0-6"
+                        value={m.nuovoTitolo}
+                        onChange={(e) => imposta('nuovoTitolo', e.target.value)}
+                        {...campo('nuovoCorso.titolo')}
+                      />
+                      <CampoTesto
+                        etichetta="Ente che ha organizzato il corso"
+                        maxLength={200}
+                        placeholder="Es. AUSL di Bologna"
+                        value={m.nuovoNomeEnte}
+                        onChange={(e) => imposta('nuovoNomeEnte', e.target.value)}
+                      />
+                      <CampoSelezione
+                        etichetta="Modalità di svolgimento"
+                        obbligatorio
+                        value={m.nuovaModalita}
+                        onChange={(e) => imposta('nuovaModalita', e.target.value as StatoModulo['nuovaModalita'])}
+                        vuota="Seleziona…"
+                        opzioni={MODALITA.map((x) => ({ valore: x, etichetta: x }))}
+                        {...campo('nuovoCorso.modalita')}
+                      />
+                      <CampoTesto
+                        etichetta="Durata complessiva del corso (ore)"
+                        obbligatorio
+                        inputMode="decimal"
+                        autoComplete="off"
+                        placeholder="Es. 16"
+                        value={m.nuovaDurata}
+                        onChange={(e) => imposta('nuovaDurata', e.target.value)}
+                        aiuto="Tutte le giornate del corso, non solo questa sessione."
+                        {...campo('nuovoCorso.durataOre')}
+                      />
+                      <GruppoRadio etichetta="Previste più giornate formative?" obbligatorio errore={erroreDi('nuovoCorso.piuGiornate')} inLinea>
+                        <SchedaRadio
+                          name="piu-giornate"
+                          valore="si"
+                          scelto={m.nuovoPiuGiornate}
+                          onScegli={(v) => imposta('nuovoPiuGiornate', v)}
+                          titolo="Sì"
+                          campo="nuovoCorso.piuGiornate"
+                          invalido={!!erroreDi('nuovoCorso.piuGiornate')}
+                        />
+                        <SchedaRadio name="piu-giornate" valore="no" scelto={m.nuovoPiuGiornate} onScegli={(v) => imposta('nuovoPiuGiornate', v)} titolo="No" />
+                      </GruppoRadio>
+                      <p className="testo-piccolo testo-secondario span-2 nota-corso-nuovo">
+                        Il codice univoco del corso (EXT-…) si crea la prima volta che salvi. Se il corso prevede più giornate, nelle richieste successive lo ritrovi tra i
+                        corsi esterni che hai già inserito. Il coordinatore può correggere titolo e dati del corso prima di approvare.
+                      </p>
+                    </Griglia>
+                  )}
+                </div>
               )}
-            </p>
-            <CampoArea
-              etichetta="Note"
-              value={m.note}
-              maxLength={MAX_LUNGHEZZA_NOTE}
-              onChange={(e) => imposta('note', e.target.value)}
-              placeholder="Es. sede del corso, docente, motivo dell’uscita anticipata…"
-              aiuto={`${m.note.length}/${MAX_LUNGHEZZA_NOTE} caratteri. Le legge il coordinatore.`}
-              {...campo('noteLavoratore')}
-            />
-          </div>
-        </Scheda>
+            </Scheda>
 
-        {/* ---------------------------------------------------------------- 3 */}
-        <Scheda titolo="3. Allegati" icona="allegato">
+            {/* --------------------------------------------- sessione e presenza */}
+            <Scheda titolo={sezione('Sessione e presenza')} icona="orologio">
+              <div className="sezione-modulo">
+                <h3>Orario della sessione</h3>
+                <Griglia colonne={3}>
+                  <CampoTesto
+                    etichetta="Data della sessione"
+                    type="date"
+                    max={oggi}
+                    obbligatorio
+                    value={m.dataSessione}
+                    onChange={(e) => imposta('dataSessione', e.target.value)}
+                    aiuto="Non può essere nel futuro né in un mese già chiuso."
+                    {...campo('dataSessione')}
+                  />
+                  <CampoTesto etichetta="Ora inizio sessione" type="time" step={300} obbligatorio value={m.oraInizioSessione} onChange={(e) => impostaOrario('oraInizioSessione', e.target.value)} {...campo('oraInizioSessione')} />
+                  <CampoTesto etichetta="Ora fine sessione" type="time" step={300} obbligatorio value={m.oraFineSessione} onChange={(e) => impostaOrario('oraFineSessione', e.target.value)} {...campo('oraFineSessione')} />
+                </Griglia>
+                <Griglia colonne={3}>
+                  {campiPausa}
+                  <CampoLettura etichetta={m.pausaPrevista === 'si' ? 'Durata della sessione (al netto della pausa)' : 'Durata della sessione'} valore={<Calcolato ore={durataSessione} />} />
+                </Griglia>
+              </div>
+
+              <div className="sezione-modulo">
+                <h3>La tua presenza</h3>
+                <Griglia colonne={3}>
+                  <CampoTesto
+                    etichetta="Ora di ingresso"
+                    type="time"
+                    step={300}
+                    obbligatorio
+                    value={m.oraIngresso}
+                    onChange={(e) => impostaOrario('oraIngresso', e.target.value)}
+                    aiuto="Quando sei entrato/a: cambiala se sei arrivato/a dopo l’inizio."
+                    {...campo('oraIngresso')}
+                  />
+                  <CampoTesto
+                    etichetta="Ora di uscita"
+                    type="time"
+                    step={300}
+                    obbligatorio
+                    value={m.oraUscita}
+                    onChange={(e) => impostaOrario('oraUscita', e.target.value)}
+                    aiuto="Quando sei uscito/a: cambiala se sei uscito/a prima della fine."
+                    {...campo('oraUscita')}
+                  />
+                  <CampoLettura etichetta="Ore frequentate" valore={<Calcolato ore={oreFrequentate} />} />
+                  {m.pausaPrevista === 'si' && parziale && (
+                    <GruppoRadio
+                      etichetta="Eri presente a cavallo della pausa?"
+                      inLinea
+                      className="span-tutto"
+                      aiuto="Rispondi «No» se sei uscito/a prima della pausa o sei entrato/a dopo: in quel caso la pausa non viene tolta dalle tue ore frequentate."
+                    >
+                      <SchedaRadio name="pausa-in-presenza" valore="si" scelto={m.pausaInPresenza} onScegli={(v) => imposta('pausaInPresenza', v)} titolo="Sì" campo="pausaInPresenza" />
+                      <SchedaRadio name="pausa-in-presenza" valore="no" scelto={m.pausaInPresenza} onScegli={(v) => imposta('pausaInPresenza', v)} titolo="No" />
+                    </GruppoRadio>
+                  )}
+                </Griglia>
+                {duplicati.length > 0 && (
+                  <Avviso tono="avviso" titolo="Hai già una richiesta per questo corso in questa data">
+                    {duplicati.map((d) => d.numero).join(', ')}. Se è un’altra sessione dello stesso giorno puoi procedere: all’invio ti verrà chiesta una conferma.
+                  </Avviso>
+                )}
+                {corso && <OreCorso corso={corso} altre={altre} durataSessione={durataSessione} />}
+              </div>
+            </Scheda>
+
+            {/* --------------------------------------------- ripartizione delle ore */}
+            <Scheda titolo={sezione('Ripartizione delle ore')} icona="grafico">
+              <div className="sezione-modulo">
+                <p className="testo-secondario nota-sopra">
+                  Indica come ripartire le ore frequentate: la somma delle tre voci deve essere <strong>uguale</strong> alle ore frequentate. Per i decimali usa la virgola
+                  (1,5 = un’ora e mezza).
+                </p>
+                <Griglia colonne={3}>
+                  <CampoTesto
+                    etichetta="Ore retribuite"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    placeholder="0"
+                    value={m.oreRetribuite}
+                    onChange={(e) => imposta('oreRetribuite', e.target.value)}
+                    aiuto="Ore da riconoscere come orario di lavoro."
+                    {...campo('oreRetribuiteRichieste')}
+                  />
+                  <CampoTesto
+                    etichetta="Ore a gettone"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    placeholder="0"
+                    disabled={gettoneNonPrevisto}
+                    value={gettoneNonPrevisto ? '0' : m.oreGettone}
+                    onChange={(e) => imposta('oreGettone', e.target.value)}
+                    aiuto={gettoneNonPrevisto ? 'Per questo corso il gettone non è previsto.' : 'Ore da riconoscere con il gettone di presenza.'}
+                    {...campo('oreGettoneRichieste')}
+                  />
+                  <CampoTesto
+                    etichetta="Ore da non retribuire"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    placeholder="0"
+                    value={m.oreNonRetribuite}
+                    onChange={(e) => imposta('oreNonRetribuite', e.target.value)}
+                    aiuto="Ore frequentate che non vanno pagate (né retribuite né a gettone)."
+                    {...campo('oreNonRetribuiteRichieste')}
+                  />
+                </Griglia>
+                <Ripartizione
+                  valori={[m.oreRetribuite, gettoneNonPrevisto ? '' : m.oreGettone, m.oreNonRetribuite]}
+                  frequentate={oreFrequentate}
+                  senzaOrari="Indica gli orari della sessione e della tua presenza: qui vedrai quante ore restano da ripartire."
+                  azioni={(diff, vuoti) =>
+                    vuoti ? (
+                      <button type="button" className="link-testo" onClick={() => imposta('oreRetribuite', testoNumero(oreFrequentate))}>
+                        Richiedi tutte le {f.numero(oreFrequentate ?? 0)} ore come retribuite
+                      </button>
+                    ) : (
+                      <button type="button" className="link-testo" onClick={() => imposta('oreNonRetribuite', testoNumero(arrotonda2(numeroCampo(m.oreNonRetribuite) + diff)))}>
+                        Metti le {f.numero(diff)} ore mancanti in «Ore da non retribuire»
+                      </button>
+                    )
+                  }
+                />
+              </div>
+              <div className="sezione-modulo">
+                <h3>Note</h3>
+                {campoNote}
+              </div>
+            </Scheda>
+          </>
+        )}
+
+        {/* ---------------------------------------------------------- allegati */}
+        <Scheda titolo={sezione('Allegati')} icona="allegato">
           <SezioneAllegati
             richiestaId={salvata?.id}
             esistenti={esistenti}
@@ -640,14 +884,27 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
               modificato();
             }}
             errore={azione.erroreDi('allegati')}
+            attestato={esterno}
+            nota={
+              permesso
+                ? 'Per i permessi non serve l’attestato: se vuoi puoi allegare un documento giustificativo.'
+                : esterno
+                  ? 'Per i corsi esterni puoi allegare l’attestato rilasciato dall’ente: è facoltativo.'
+                  : 'Per i corsi di Società Dolce l’attestato non va allegato: è già disponibile a sistema.'
+            }
+            descrizioneAltra={
+              permesso
+                ? 'Ad esempio certificato di frequenza, statino dell’esame o altra documentazione utile.'
+                : 'Ad esempio foglio firme, programma del corso o altra documentazione utile.'
+            }
           />
         </Scheda>
 
-        {/* ---------------------------------------------------------------- 4 */}
-        <Scheda titolo="4. Dichiarazioni" icona="valida">
+        {/* ------------------------------------------------------ dichiarazioni */}
+        <Scheda titolo={sezione('Dichiarazioni')} icona="valida">
           <div className="dichiarazioni-modulo">
             <Casella
-              etichetta="Confermo di aver partecipato all’attività formativa indicata."
+              etichetta={permesso ? 'Confermo di aver usufruito del permesso nella data e negli orari indicati.' : 'Confermo di aver partecipato all’attività formativa indicata.'}
               checked={m.dichiarazioni.partecipazione}
               onChange={(e) => imposta('dichiarazioni', { ...m.dichiarazioni, partecipazione: e.target.checked })}
               errore={erroreDi('dichiarazioni.partecipazione')}
@@ -661,14 +918,18 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
               data-campo="dichiarazioni.correttezza"
             />
             <Casella
-              etichetta="Autorizzo l’invio della richiesta al coordinatore e all’Ufficio HR/Formazione per il riconoscimento delle ore."
+              etichetta={
+                permesso
+                  ? 'Autorizzo l’invio della richiesta al coordinatore e all’Ufficio HR/Formazione per il riconoscimento delle ore di permesso.'
+                  : 'Autorizzo l’invio della richiesta al coordinatore e all’Ufficio HR/Formazione per il riconoscimento delle ore.'
+              }
               checked={m.dichiarazioni.autorizzazione}
               onChange={(e) => imposta('dichiarazioni', { ...m.dichiarazioni, autorizzazione: e.target.checked })}
               errore={erroreDi('dichiarazioni.autorizzazione')}
               data-campo="dichiarazioni.autorizzazione"
             />
           </div>
-          <p className="testo-piccolo testo-secondario">Le dichiarazioni servono per l’invio; puoi salvare la bozza anche senza.</p>
+          <p className="testo-piccolo testo-secondario nota-sotto">Le dichiarazioni servono per l’invio; puoi salvare la bozza anche senza.</p>
         </Scheda>
 
         {riepilogo.length > 0 && (
@@ -677,7 +938,7 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
               <ul>
                 {riepilogo.map((e) => (
                   <li key={e.campo}>
-                    {!CAMPI_SENZA_INPUT.has(e.campo) ? (
+                    {!CAMPI_SENZA_INPUT.has(e.campo) && !(e.campo === 'tipologia' && tipologiaBloccata) ? (
                       <button type="button" className="link-testo" onClick={() => vaiAlCampo(e.campo)}>
                         {e.messaggio}
                       </button>
@@ -717,9 +978,25 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
 // ---------------------------------------------------------------------------
 //  Componenti del modulo
 // ---------------------------------------------------------------------------
-function GruppoRadio({ etichetta, obbligatorio, errore, inLinea, children }: { etichetta: string; obbligatorio?: boolean; errore?: string; inLinea?: boolean; children: ReactNode }) {
+function GruppoRadio({
+  etichetta,
+  obbligatorio,
+  errore,
+  inLinea,
+  aiuto,
+  className,
+  children,
+}: {
+  etichetta: string;
+  obbligatorio?: boolean;
+  errore?: string;
+  inLinea?: boolean;
+  aiuto?: string;
+  className?: string;
+  children: ReactNode;
+}) {
   return (
-    <fieldset className={`gruppo-scelta${errore ? ' campo-errore' : ''}${inLinea ? ' gruppo-scelta-in-linea' : ''}`}>
+    <fieldset className={`gruppo-scelta${errore ? ' campo-errore' : ''}${inLinea ? ' gruppo-scelta-in-linea' : ''}${className ? ` ${className}` : ''}`}>
       <legend className="campo-etichetta">
         {etichetta}
         {obbligatorio && (
@@ -730,6 +1007,7 @@ function GruppoRadio({ etichetta, obbligatorio, errore, inLinea, children }: { e
         )}
       </legend>
       <div className="radio-gruppo">{children}</div>
+      {aiuto && !errore && <span className="campo-aiuto">{aiuto}</span>}
       {errore && (
         <span className="campo-messaggio-errore" role="alert">
           {errore}
@@ -772,19 +1050,17 @@ function SchedaRadio<T extends string>({
   );
 }
 
+/** Dati del corso scelto: l'ente erogatore è dedotto dal corso e non si modifica. */
 function DettagliCorso({ corso: c }: { corso: Corso }) {
   const esterno = c.ente === ESTERNO;
   return (
     <div className="dettagli-corso" aria-label="Dati del corso">
       <Griglia colonne={4}>
+        <CampoLettura etichetta="Ente erogatore" valore={esterno ? `${ESTERNO}${c.nomeEnte ? ` – ${c.nomeEnte}` : ''}` : `${DATORE} (Società Dolce)`} />
         <CampoLettura etichetta="Codice univoco" valore={c.codice} />
         <CampoLettura etichetta="Modalità di svolgimento" valore={c.modalita} />
         <CampoLettura etichetta="Durata complessiva" valore={f.ore(c.durataOre)} />
-        {esterno ? (
-          <CampoLettura etichetta="Ente" valore={c.nomeEnte ?? c.ente} />
-        ) : (
-          <CampoLettura etichetta="Gettone previsto" valore={c.gettonePrevisto ? 'Sì' : 'No'} />
-        )}
+        {!esterno && <CampoLettura etichetta="Gettone previsto" valore={c.gettonePrevisto ? 'Sì' : 'No'} />}
       </Griglia>
     </div>
   );
@@ -799,15 +1075,53 @@ function Calcolato({ ore }: { ore: number | null }) {
   );
 }
 
-function TotaleRichiesto({ ret, get, frequentate }: { ret: string; get: string; frequentate: number | null }) {
-  const totale = numeroCampo(ret) + numeroCampo(get);
-  if (!Number.isFinite(totale)) return <span className="testo-secondario">—</span>;
-  const oltre = frequentate !== null && totale > frequentate + 0.001;
+/** Monte ore del permesso: situazione, residuo disponibile e residuo dopo questa richiesta. */
+function RiquadroMonteOre({ monte, tipologia, residuo, richieste }: { monte: SituazioneMonteOre | null; tipologia: Tipologia; residuo: number; richieste: number | null }) {
+  if (!monte) {
+    return (
+      <Avviso tono="pericolo" titolo="Nessun monte ore attivo">
+        Non hai un monte ore attivo per «{tipologia}»: rivolgiti all’Ufficio HR/Formazione.
+      </Avviso>
+    );
+  }
+  const ore = richieste !== null && richieste > 0 ? richieste : null;
+  const dopo = ore !== null ? arrotonda2(residuo - ore) : null;
+  const oltre = dopo !== null && dopo < -0.005;
   return (
-    <span className={oltre ? 'calcolato calcolato-errato' : 'calcolato'} aria-live="polite">
-      {f.ore(arrotonda2(totale))}
-      {frequentate !== null && frequentate > 0 && <span className="testo-secondario"> su {f.ore(frequentate)} frequentate</span>}
-    </span>
+    <div className={`riquadro-monte${oltre ? ' riquadro-monte-esaurito' : ''}`}>
+      <div className="riquadro-monte-testata">
+        <span className="testatina">{monte.tipo}</span>
+        <span className="testo-secondario testo-piccolo">
+          {f.ore(monte.oreTotali)} assegnate · valido dal {f.data(monte.validoDal)} al {f.data(monte.validoAl)}
+        </span>
+      </div>
+      <BarraMonteOre situazione={monte} />
+      <dl className="elenco-dati riquadro-monte-dati">
+        <div>
+          <dt>Residuo disponibile</dt>
+          <dd>{f.ore(residuo)}</dd>
+        </div>
+        <div>
+          <dt>Ore di questa richiesta</dt>
+          <dd>{ore !== null ? f.ore(ore) : '—'}</dd>
+        </div>
+        <div>
+          <dt>Residuo dopo questa richiesta</dt>
+          <dd className={oltre ? 'testo-pericolo' : undefined} aria-live="polite">
+            {dopo !== null ? f.ore(dopo) : '—'}
+          </dd>
+        </div>
+      </dl>
+      {oltre ? (
+        <Avviso tono="pericolo" titolo={residuo <= 0 ? 'Monte ore esaurito' : 'Ore oltre il monte ore residuo'}>
+          {residuo <= 0 ? 'Il tuo monte ore è esaurito: non puoi richiedere altre ore.' : `Stai chiedendo ${f.numero(ore ?? 0)} ore ma nel tuo monte ore ne restano ${f.numero(residuo)}: la richiesta non può essere inviata.`}
+        </Avviso>
+      ) : (
+        <p className="testo-piccolo testo-secondario">
+          Le ore richieste si scalano dal monte ore: restano «in approvazione» finché il coordinatore e l’Ufficio HR/Formazione non decidono.
+        </p>
+      )}
+    </div>
   );
 }
 
