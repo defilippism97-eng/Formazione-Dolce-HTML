@@ -454,7 +454,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .dialogo-piede { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 22px; border-top: 1px solid var(--bordo); flex-wrap: wrap; }
 .dialogo-testo { white-space: pre-line; }
 
-.toast-area { position: fixed; right: 16px; top: calc(var(--altezza-intestazione) + 12px); display: grid; gap: 8px; z-index: 80; width: min(420px, calc(100vw - 32px)); }
+/* in alto al centro: non coprono il pulsante di chiusura delle finestre né le azioni in fondo alla pagina */
+.toast-area { position: fixed; left: 50%; transform: translateX(-50%); top: 12px; display: grid; gap: 8px; z-index: 80; width: min(420px, calc(100vw - 32px)); }
 .toast { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; padding: 12px 8px 12px 16px; color: #fff; box-shadow: var(--ombra-alta); font-weight: 700; }
 .toast-successo { background: var(--successo); }
 .toast-errore { background: var(--pericolo); }

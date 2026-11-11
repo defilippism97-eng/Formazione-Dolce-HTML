@@ -50,7 +50,7 @@ Come funziona la demo:
 ### Tecnologie
 
 - **TypeScript (strict) + React 18**, nessun'altra libreria a runtime.
-- **esbuild** per compilare in un **unico file HTML** (circa 460 KB, nessuna risorsa esterna).
+- **esbuild** per compilare in un **unico file HTML** (circa 670 KB con carattere e logo incorporati, nessuna risorsa esterna).
 - **Vitest** per i test delle regole, **Playwright** per i test nel browser.
 
 Comandi:

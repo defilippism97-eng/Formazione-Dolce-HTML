@@ -662,6 +662,7 @@ export function creaDatiDemo(adesso: Date = new Date()): DatiDemo {
   const nuovoMonte = (l: Lavoratore, tipo: MonteOre['tipo'], oreTotali: number, extra: Partial<MonteOre> = {}): MonteOre => {
     const m: MonteOre = { id: `mo${montiOre.length + 1}`, lavoratoreId: l.id, tipo, oreTotali, ...periodoMonte, attivo: true, assegnatoDa: hrLogin, assegnatoIl: assegnato, ...extra };
     montiOre.push(m);
+    registro.push({ id: nuovoId('g'), data: assegnato, autore: hrLogin, ruolo: 'Formazione HR', azione: 'Assegnazione monte ore', entita: 'Monte ore', entitaId: m.id, nota: `${l.cognome} ${l.nome} – ${tipo}: ${oreTotali} ore dal ${m.validoDal} al ${m.validoAl}` });
     return m;
   };
   // Giulia: diritto allo studio, ampio residuo

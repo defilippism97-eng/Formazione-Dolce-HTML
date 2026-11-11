@@ -92,7 +92,7 @@ Per la formazione l'**ente erogatore** non è scelto dal lavoratore: un corso de
 - **Il browser non è affidabile**: in produzione ogni controllo (identità, ruoli, visibilità, transizioni, ore, mese chiuso) va ripetuto nel server. Il backend demo mostra esattamente quali.
 - **Dati personali**: il codice fiscale non viene mai restituito in chiaro al lavoratore, solo mascherato; compare solo nel file paghe e ad HR/amministratori. Non va scritto nel registro né nei log. Le e-mail non contengono dati fiscali.
 - **Allegati**: si scaricano solo tramite un endpoint che verifica la visibilità della richiesta. Tipi ammessi: PDF e immagini, massimo 10 MB, massimo 5 file.
-- **CSV**: i campi di testo sono racchiusi tra apici e protetti dall'esecuzione di formule in Excel (CSV injection).
+- **CSV**: file paghe e riepilogo delle richieste hanno una colonna per ogni voce di ore (retribuite, gettone, non retribuite, permessi); i campi di testo sono racchiusi tra apici e protetti dall'esecuzione di formule in Excel (CSV injection).
 - **Interfaccia**: React esegue l'escape dei contenuti; nessun uso di `innerHTML` con dati. Intestazioni di sicurezza consigliate in `staticwebapp.config.json`.
 - **Accesso**: in produzione nessuna password viene digitata nell'app (Single Sign-On Microsoft 365).
 
