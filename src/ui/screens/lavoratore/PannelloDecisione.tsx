@@ -15,7 +15,7 @@ import { useApp, useConferma, useMessaggi } from '../../contesto';
 import * as f from '../../format';
 import { useAzione } from '../../hooks';
 import { focusPrimoErrore, testoNumero } from './comuni';
-import { Ripartizione } from './Ripartizione';
+import { oreMancanti, Ripartizione } from './Ripartizione';
 import { numeroCampo } from './statoModulo';
 
 type RuoloDecisione = 'coordinatore' | 'hr';
@@ -201,7 +201,7 @@ export function PannelloDecisione({
           frequentate={r.oreFrequentate}
           azioni={(diff) => (
             <button type="button" className="link-testo" onClick={() => setOreNon(testoNumero(arrotonda2(numeroCampo(oreNon) + diff)))}>
-              Metti le {f.numero(diff)} ore mancanti in «{permesso ? 'Ore non riconosciute' : 'Ore da non retribuire'}»
+              {oreMancanti(diff)} in «{permesso ? 'Ore non riconosciute' : 'Ore da non retribuire'}»
             </button>
           )}
         />

@@ -12,7 +12,7 @@
  * il monte ore residuo del lavoratore.
  * Il backend ricontrolla ogni richiesta e restituisce quelle scartate con il motivo.
  */
-import { useCallback, useId, useMemo, useState, type ChangeEvent, type ReactNode } from 'react';
+import { useCallback, useId, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import type { DecisioneMultiplaInput, RisultatoMultiplo } from '../../data/api';
 import {
   arrotonda2,
@@ -236,6 +236,9 @@ export function ValidazioneHR() {
     [filtri],
   );
   const dati = useCarica(() => backend.getRichieste('tutte', filtriApi), [backend, JSON.stringify(filtriApi)]);
+  // dopo una decisione si ricarica con i filtri del momento, anche se sono cambiati mentre l'operazione era in corso
+  const ricaricaRif = useRef(dati.ricarica);
+  ricaricaRif.current = dati.ricarica;
 
   const chiusure = supporto.dati?.chiusure;
   const anagrafiche = supporto.dati?.anagrafiche;
@@ -324,7 +327,7 @@ export function ValidazioneHR() {
       r.scartate.length ? 'avviso' : 'successo',
       `${TESTI_ESITO[input.esito].fatto} ${plurale(r.elaborate, 'richiesta', 'richieste')}${r.scartate.length ? `; ${r.scartate.length} non elaborate` : ''}.`,
     );
-    await dati.ricarica();
+    await Promise.all([ricaricaRif.current(), supporto.ricarica()]);
   };
 
   /** Chiede la conferma (e la nota, se serve). Restituisce null se l'utente annulla. */
@@ -510,10 +513,13 @@ export function ValidazioneHR() {
                 selezione={{ selezionati, onCambia: setSelezionati, selezionabile: decidibile }}
                 colonne={[
                   {
-                    titolo: 'Richiesta',
+                    titolo: 'Richiesta e stato',
                     valore: (r) => (
                       <span className="cella-blocco">
                         <span className="cella-principale">{r.numero}</span>
+                        <span className="cella-secondaria">
+                          <BadgeStato stato={r.stato} />
+                        </span>
                         <Segnali compatto segnali={segnaliRichiesta(r, { cfMancante: cfMancante.has(r.lavoratoreId), oreRidotte: oreRidotteDalCoordinatore(r) })} />
                         {meseChiuso(r) && (
                           <span className="cella-secondaria">
@@ -563,7 +569,6 @@ export function ValidazioneHR() {
                         <VociOre tipologia={r.tipologia} {...vociHR(r)} />
                       ),
                   },
-                  { titolo: 'Stato', valore: (r) => <BadgeStato stato={r.stato} /> },
                 ]}
                 azioni={(r) => <PulsanteIcona icona="visualizza" etichetta={`Apri ${r.numero} (dettaglio e storico)`} onClick={() => naviga(ROTTE.dettaglio(r.id))} />}
               />

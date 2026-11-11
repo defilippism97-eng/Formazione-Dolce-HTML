@@ -40,7 +40,7 @@ Il backend simulato `src/data/demo/backend-demo.ts` è la **specifica eseguibile
 | `POST /richieste?azione=bozza\|invia` | lavoratore | `multipart/form-data`: `dati` = JSON `SalvaRichiestaInput` senza file; `allegato_N` (file) + `tipo_N` (`Attestato`/`Altra documentazione`) | `Richiesta`. 409 con `richiestaConferma: "duplicato"` se serve conferma |
 | `PUT /richieste/{id}?azione=bozza\|invia` | proprietario | come sopra; `dati.allegatiRimossi` = ID da eliminare | `Richiesta` |
 | `POST /richieste/{id}/annulla` | proprietario | — | `Richiesta` |
-| `GET /richieste/{id}` | chi può vederla | — | `DettaglioRichiesta` (storico completo solo a HR/admin; `gettonePrevisto`; per i permessi `monteOre` con le ore residue senza contare questa richiesta) |
+| `GET /richieste/{id}` | chi può vederla | — | `DettaglioRichiesta` (storico completo solo a HR/admin; `gettonePrevisto`; `nomeEnteCorso` = ente che ha organizzato il corso; per i permessi `monteOre` con le ore residue senza contare questa richiesta) |
 | `GET /richieste/{id}/allegati/{allegatoId}` | chi può vedere la richiesta | — | file binario (`Content-Disposition: attachment`) |
 | `GET /richieste?ambito=team\|tutte&anno&mese&area&servizio&centroDiCosto&coordinatoreLogin&login&codiceCorso&stato&tipologia&testo` | team: coordinatore; tutte: HR/admin | — | `Richiesta[]` (mai le bozze altrui) |
 | `GET /team/lavoratori` | coordinatore | — | `LavoratoreTeam[]` |

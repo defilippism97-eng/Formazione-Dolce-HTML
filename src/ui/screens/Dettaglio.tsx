@@ -413,7 +413,7 @@ function Allegati({ r }: { r: Richiesta }) {
           ? 'Per i permessi non è previsto l’attestato: gli allegati sono facoltativi.'
           : esterno
             ? 'Corso esterno: l’attestato rilasciato dall’ente è facoltativo.'
-            : 'Corso di Società Dolce: l’attestato non va allegato, è già disponibile a sistema.'}
+            : 'Corso di Società Dolce: l’attestato non va allegato.'}
       </p>
       {r.allegati.length === 0 ? (
         <Vuoto titolo="Nessun allegato" icona="allegato" />

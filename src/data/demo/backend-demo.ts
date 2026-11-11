@@ -656,8 +656,11 @@ export class BackendDemo implements Backend {
     const duplicati = trovaDuplicati(r, this.dati.richieste).filter((d) => puoVedereRichiesta(s, d)).map((d) => d.numero);
     const m = r.monteOreId ? this.dati.montiOre.find((x) => x.id === r.monteOreId) : undefined;
     const monteOre = m ? { ...this.situazione(m), oreResidueSenzaQuesta: consumoMonteOre(m, this.dati.richieste, r.id).oreResidue } : undefined;
-    const gettonePrevisto = r.tipologia === 'Formazione' && (this.dati.corsi.find((c) => c.id === r.corsoId)?.gettonePrevisto ?? true);
-    return this.copia({ richiesta: r, azioni: azioniConsentite(s, r, meseChiuso), meseChiuso, storico, duplicati, monteOre, gettonePrevisto });
+    const corso = this.dati.corsi.find((c) => c.id === r.corsoId);
+    const gettonePrevisto = r.tipologia === 'Formazione' && (corso?.gettonePrevisto ?? true);
+    // stringa vuota e non undefined: chi corregge il corso deve poter distinguere "nessun ente" da "dato non disponibile"
+    const nomeEnteCorso = corso?.nomeEnte ?? '';
+    return this.copia({ richiesta: r, azioni: azioniConsentite(s, r, meseChiuso), meseChiuso, storico, duplicati, monteOre, gettonePrevisto, nomeEnteCorso });
   }
 
   async scaricaAllegato(richiestaId: string, allegatoId: string): Promise<{ nome: string; mime: string; contenuto: Blob }> {

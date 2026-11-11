@@ -235,6 +235,8 @@ describe('nuove logiche', () => {
     expect((await be.getDettaglio(r.id)).azioni.correzioneCorso).toBe(true);
     const corretta = await be.correggiCorso(r.id, { titolo: 'Pedagogia 0-6: continuità educativa', nomeEnte: 'Comune di Bologna', modalita: 'In presenza', durataOre: 8, piuGiornate: false });
     expect(corretta.titoloCorsoLibero).toBe('Pedagogia 0-6: continuità educativa');
+    // il coordinatore rilegge l'ente dal dettaglio: senza, una seconda correzione lo cancellerebbe
+    expect((await be.getDettaglio(r.id)).nomeEnteCorso).toBe('Comune di Bologna');
     await come(LAURA);
     const storico = (await be.getDettaglio(r.id)).storico;
     expect(storico.some((v) => v.azione === 'Correzione dati del corso' && v.prima === 'formazione')).toBe(true);

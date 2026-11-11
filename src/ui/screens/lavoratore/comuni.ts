@@ -2,7 +2,7 @@
  * Funzioni di supporto condivise dalle schermate Profilo, Modulo richiesta, Dettaglio e Posta.
  */
 import { useCallback, useState } from 'react';
-import type { Allegato, ChiusuraMensile, Richiesta } from '../../../domain';
+import type { Allegato, ChiusuraMensile } from '../../../domain';
 import { useApp, useMessaggi } from '../../contesto';
 import { scaricaFile } from '../../format';
 import { messaggioErrore } from '../../hooks';

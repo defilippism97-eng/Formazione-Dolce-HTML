@@ -312,7 +312,7 @@ export function Riepilogo() {
 
             <section className="pannello-stampa stampa-tabelle" hidden={sezione !== 'dettaglio'} aria-label="Dettaglio delle richieste">
               <h2 className="pannello-titolo solo-stampa">Dettaglio richieste ({righe.length})</h2>
-              <div className="gestione-tabella tabella-compatta">
+              <div className="gestione-tabella tabella-compatta tabella-fitta">
                 <Tabella
                   didascalia="Dettaglio delle richieste del riepilogo"
                   righe={righe}
@@ -331,18 +331,18 @@ export function Riepilogo() {
                       ),
                     },
                     {
-                      titolo: 'Servizio',
+                      titolo: quadroCompleto ? 'Servizio e coordinatore' : 'Servizio',
                       valore: (r) => (
-                        <span className="cella-blocco">
+                        <span className="cella-blocco testo-a-capo">
                           {r.servizio}
                           <span className="cella-secondaria">
                             {r.centroDiCosto} · {r.area}
                           </span>
+                          {quadroCompleto && <span className="cella-secondaria">Coord.: {r.coordinatoreNome ?? 'non assegnato'}</span>}
                         </span>
                       ),
                       secondaria: true,
                     },
-                    ...(quadroCompleto ? [{ titolo: 'Coordinatore', valore: (r: (typeof righe)[number]) => r.coordinatoreNome ?? '—', secondaria: true }] : []),
                     { titolo: 'Tipologia e corso / attività', valore: (r) => <CellaTitolo r={r} /> },
                     { titolo: 'Data', valore: (r) => f.data(r.dataSessione) },
                     { titolo: 'Ore frequentate', valore: (r) => f.numero(r.oreFrequentate), numerica: true },

@@ -48,7 +48,7 @@ import { useAzione, useCarica } from '../hooks';
 import { naviga, ROTTE } from '../router';
 import { SezioneAllegati, type FileNuovo } from './lavoratore/CaricaAllegati';
 import { focusPrimoErrore, isMeseChiuso, sostituisciPercorso, testoNumero } from './lavoratore/comuni';
-import { Ripartizione } from './lavoratore/Ripartizione';
+import { oreMancanti, Ripartizione } from './lavoratore/Ripartizione';
 import { SelettoreCorso } from './lavoratore/SelettoreCorso';
 import {
   corsoDaRichiesta,
@@ -594,10 +594,7 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
                 <RiquadroMonteOre monte={monte} tipologia={m.tipologia} residuo={residuoMonte} richieste={oreFrequentate} />
               </div>
 
-              <div className="sezione-modulo">
-                <h3>Note</h3>
-                {campoNote}
-              </div>
+              <div className="sezione-modulo">{campoNote}</div>
             </Scheda>
           </>
         ) : (
@@ -854,16 +851,13 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
                       </button>
                     ) : (
                       <button type="button" className="link-testo" onClick={() => imposta('oreNonRetribuite', testoNumero(arrotonda2(numeroCampo(m.oreNonRetribuite) + diff)))}>
-                        Metti le {f.numero(diff)} ore mancanti in «Ore da non retribuire»
+                        {oreMancanti(diff)} in «Ore da non retribuire»
                       </button>
                     )
                   }
                 />
               </div>
-              <div className="sezione-modulo">
-                <h3>Note</h3>
-                {campoNote}
-              </div>
+              <div className="sezione-modulo">{campoNote}</div>
             </Scheda>
           </>
         )}
@@ -890,7 +884,7 @@ function Modulo({ dati, richiesta }: { dati: DatiModulo; richiesta?: Richiesta }
                 ? 'Per i permessi non serve l’attestato: se vuoi puoi allegare un documento giustificativo.'
                 : esterno
                   ? 'Per i corsi esterni puoi allegare l’attestato rilasciato dall’ente: è facoltativo.'
-                  : 'Per i corsi di Società Dolce l’attestato non va allegato: è già disponibile a sistema.'
+                  : 'Per i corsi di Società Dolce l’attestato non va allegato.'
             }
             descrizioneAltra={
               permesso

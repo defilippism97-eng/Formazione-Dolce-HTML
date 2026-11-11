@@ -261,23 +261,25 @@ export function Chiusura() {
               {s.chiusura.filePaghe.length === 0 ? (
                 <Vuoto titolo="Nessun file generato per questo mese." icona="file" />
               ) : (
-                <Tabella
-                  didascalia={`File paghe di ${nomePeriodo}`}
-                  righe={[...s.chiusura.filePaghe].reverse()}
-                  chiave={(x) => x.id}
-                  colonne={[
-                    { titolo: 'File', valore: (x) => <span className="cella-principale testo-a-capo">{x.nome}</span> },
-                    { titolo: 'Versione', valore: (x) => x.versione, numerica: true },
-                    { titolo: 'Generato il', valore: (x) => f.dataOra(x.generatoIl) },
-                    { titolo: 'Da', valore: (x) => nomeUtente(utenti, x.generatoDa), secondaria: true },
-                    { titolo: 'Righe', valore: (x) => x.righe, numerica: true },
-                    { titolo: 'Ore retribuite', valore: (x) => f.numero(x.totaleOreRetribuite), numerica: true },
-                    { titolo: 'Ore gettone', valore: (x) => f.numero(x.totaleOreGettone), numerica: true },
-                    { titolo: 'Ore non retribuite', valore: (x) => f.numero(x.totaleOreNonRetribuite ?? 0), numerica: true },
-                    { titolo: 'Ore di permesso', valore: (x) => f.numero(x.totaleOrePermessi ?? 0), numerica: true },
-                  ]}
-                  azioni={(x) => <PulsanteIcona icona="scarica" etichetta={`Scarica ${x.nome}`} disabled={azione.inCorso} onClick={() => void scarica(s.chiusura.periodo, x)} />}
-                />
+                <div className="gestione-tabella tabella-compatta">
+                  <Tabella
+                    didascalia={`File paghe di ${nomePeriodo}`}
+                    righe={[...s.chiusura.filePaghe].reverse()}
+                    chiave={(x) => x.id}
+                    colonne={[
+                      { titolo: 'File', valore: (x) => <span className="cella-principale testo-a-capo">{x.nome}</span> },
+                      { titolo: 'Versione', valore: (x) => x.versione, numerica: true },
+                      { titolo: 'Generato il', valore: (x) => f.dataOra(x.generatoIl) },
+                      { titolo: 'Da', valore: (x) => nomeUtente(utenti, x.generatoDa), secondaria: true },
+                      { titolo: 'Righe', valore: (x) => x.righe, numerica: true },
+                      { titolo: 'Ore retribuite', valore: (x) => f.numero(x.totaleOreRetribuite), numerica: true },
+                      { titolo: 'Ore gettone', valore: (x) => f.numero(x.totaleOreGettone), numerica: true },
+                      { titolo: 'Ore non retribuite', valore: (x) => f.numero(x.totaleOreNonRetribuite ?? 0), numerica: true },
+                      { titolo: 'Ore di permesso', valore: (x) => f.numero(x.totaleOrePermessi ?? 0), numerica: true },
+                    ]}
+                    azioni={(x) => <PulsanteIcona icona="scarica" etichetta={`Scarica ${x.nome}`} disabled={azione.inCorso} onClick={() => void scarica(s.chiusura.periodo, x)} />}
+                  />
+                </div>
               )}
             </Scheda>
 
@@ -303,34 +305,36 @@ export function Chiusura() {
         ) : !storico.dati ? (
           <Caricamento />
         ) : (
-          <Tabella
-            didascalia="Storico delle chiusure mensili"
-            righe={[...storico.dati].sort((a, b) => b.periodo.localeCompare(a.periodo))}
-            chiave={(c) => c.periodo}
-            onApri={(c) => cambiaPeriodo({ anno: c.anno, mese: c.mese })}
-            vuoto="Nessun mese chiuso finora."
-            colonne={[
-              {
-                titolo: 'Periodo',
-                valore: (c) => (
-                  <span className="cella-principale">
-                    {f.periodo(c.anno, c.mese)}
-                    {c.anno === anno && c.mese === mese && <span className="sr-only"> (selezionato)</span>}
-                  </span>
-                ),
-              },
-              { titolo: 'Stato', valore: (c) => <EtichettaPeriodo stato={c.stato} /> },
-              { titolo: 'Chiuso il', valore: (c) => f.dataOra(c.dataChiusura) },
-              { titolo: 'Da', valore: (c) => (c.utenteChiusura ? nomeUtente(utenti, c.utenteChiusura) : '—'), secondaria: true },
-              { titolo: 'Richieste', valore: (c) => c.numeroRichieste, numerica: true },
-              { titolo: 'Ore retribuite', valore: (c) => f.numero(c.totaleOreRiconosciute), numerica: true },
-              { titolo: 'Ore gettone', valore: (c) => f.numero(c.totaleGettoni), numerica: true },
-              { titolo: 'Ore non retribuite', valore: (c) => f.numero(c.totaleOreNonRetribuite ?? 0), numerica: true, secondaria: true },
-              { titolo: 'Ore di permesso', valore: (c) => f.numero(c.totaleOrePermessi ?? 0), numerica: true, secondaria: true },
-              { titolo: 'File paghe', valore: (c) => c.filePaghe.length, numerica: true, secondaria: true },
-            ]}
-            azioni={(c) => <PulsanteIcona icona="visualizza" etichetta={`Apri ${f.periodo(c.anno, c.mese)}`} onClick={() => cambiaPeriodo({ anno: c.anno, mese: c.mese })} />}
-          />
+          <div className="gestione-tabella tabella-compatta">
+            <Tabella
+              didascalia="Storico delle chiusure mensili"
+              righe={[...storico.dati].sort((a, b) => b.periodo.localeCompare(a.periodo))}
+              chiave={(c) => c.periodo}
+              onApri={(c) => cambiaPeriodo({ anno: c.anno, mese: c.mese })}
+              vuoto="Nessun mese chiuso finora."
+              colonne={[
+                {
+                  titolo: 'Periodo',
+                  valore: (c) => (
+                    <span className="cella-principale">
+                      {f.periodo(c.anno, c.mese)}
+                      {c.anno === anno && c.mese === mese && <span className="sr-only"> (selezionato)</span>}
+                    </span>
+                  ),
+                },
+                { titolo: 'Stato', valore: (c) => <EtichettaPeriodo stato={c.stato} /> },
+                { titolo: 'Chiuso il', valore: (c) => f.dataOra(c.dataChiusura) },
+                { titolo: 'Da', valore: (c) => (c.utenteChiusura ? nomeUtente(utenti, c.utenteChiusura) : '—'), secondaria: true },
+                { titolo: 'Richieste', valore: (c) => c.numeroRichieste, numerica: true },
+                { titolo: 'Ore retribuite', valore: (c) => f.numero(c.totaleOreRiconosciute), numerica: true },
+                { titolo: 'Ore gettone', valore: (c) => f.numero(c.totaleGettoni), numerica: true },
+                { titolo: 'Ore non retribuite', valore: (c) => f.numero(c.totaleOreNonRetribuite ?? 0), numerica: true, secondaria: true },
+                { titolo: 'Ore di permesso', valore: (c) => f.numero(c.totaleOrePermessi ?? 0), numerica: true, secondaria: true },
+                { titolo: 'File paghe', valore: (c) => c.filePaghe.length, numerica: true, secondaria: true },
+              ]}
+              azioni={(c) => <PulsanteIcona icona="visualizza" etichetta={`Apri ${f.periodo(c.anno, c.mese)}`} onClick={() => cambiaPeriodo({ anno: c.anno, mese: c.mese })} />}
+            />
+          </div>
         )}
       </Scheda>
     </Pagina>
@@ -553,7 +557,7 @@ function SezioneAperte({ s }: { s: StatoMese }) {
                 </span>
               ))}
             </div>
-            <div className="gestione-tabella tabella-compatta">
+            <div className="gestione-tabella tabella-compatta tabella-fitta">
               <Tabella
                 didascalia="Richieste ancora aperte nel mese"
                 righe={elenco}
@@ -625,14 +629,14 @@ function AnteprimaPaghe({ s, anno, mese, lavoratori }: { s: StatoMese; anno: num
           <Caricamento testo="Preparazione dell’anteprima…" />
         ) : (
           <>
-            <div className="indicatori indicatori-compatti" role="group" aria-label="Totali del file paghe">
+            <div className="indicatori indicatori-compatti indicatori-cinque" role="group" aria-label="Totali del file paghe">
               <Indicatore etichetta="Ore retribuite" valore={f.numero(totali.oreRetribuite)} tono="successo" />
               <Indicatore etichetta="Ore gettone" valore={f.numero(totali.oreGettone)} tono="successo" />
               <Indicatore etichetta="Ore non retribuite" valore={f.numero(totali.oreNonRetribuite)} />
               <Indicatore etichetta="Ore diritto allo studio" valore={f.numero(dirittoStudio)} tono="info" />
               <Indicatore etichetta="Ore riqualifica professionale" valore={f.numero(riqualifica)} tono="info" />
             </div>
-            <div className="gestione-tabella tabella-compatta">
+            <div className="gestione-tabella tabella-compatta tabella-fitta">
               <Tabella<RigaPaghe>
                 didascalia="Anteprima delle righe del file paghe"
                 righe={visibili}
@@ -661,21 +665,22 @@ function AnteprimaPaghe({ s, anno, mese, lavoratori }: { s: StatoMese; anno: num
                     ),
                   },
                   {
-                    titolo: 'Tipologia e titolo',
+                    titolo: 'Tipologia, titolo e data',
                     valore: (r) => (
                       <span className="cella-titolo-corso testo-a-capo">
                         {r.titoloCorso}
-                        <span className="cella-secondaria">{r.tipologia === 'Formazione' ? 'Formazione' : <Etichetta tono="info">{r.tipologia}</Etichetta>}</span>
+                        <span className="cella-secondaria">
+                          {r.tipologia === 'Formazione' ? 'Formazione' : <Etichetta tono="info">{r.tipologia}</Etichetta>} · {f.data(r.dataCorso)}
+                        </span>
+                        <span className="cella-secondaria">{r.idRichiesta}</span>
                       </span>
                     ),
                   },
-                  { titolo: 'Data', valore: (r) => f.data(r.dataCorso) },
                   { titolo: 'Ore retribuite', valore: (r) => zero(r.oreRetribuite), numerica: true },
                   { titolo: 'Ore gettone', valore: (r) => zero(r.oreGettone), numerica: true },
                   { titolo: 'Ore non retribuite', valore: (r) => zero(r.oreNonRetribuite), numerica: true },
                   { titolo: 'Ore diritto allo studio', valore: (r) => zero(r.oreDirittoStudio), numerica: true },
                   { titolo: 'Ore riqualifica professionale', valore: (r) => zero(r.oreRiqualifica), numerica: true },
-                  { titolo: 'ID richiesta', valore: (r) => r.idRichiesta, secondaria: true },
                 ]}
               />
             </div>

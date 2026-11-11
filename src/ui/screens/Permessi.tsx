@@ -145,7 +145,7 @@ export function Permessi() {
       ) : (
         dati.dati && (
           <>
-            <div className="indicatori indicatori-compatti" role="group" aria-label="Totali dei monte ore attivi">
+            <div className="indicatori indicatori-compatti indicatori-cinque" role="group" aria-label="Totali dei monte ore attivi">
               <Indicatore etichetta="Lavoratori abilitati" valore={totali.abilitati} nota="Con un monte ore attivo oggi" tono="info" />
               <Indicatore etichetta="Ore assegnate" valore={f.numero(totali.assegnate)} nota="Monte ore attivi" />
               <Indicatore etichetta="Ore usufruite" valore={f.numero(totali.usufruite)} nota="Permessi validati da HR" tono="successo" />
@@ -153,7 +153,7 @@ export function Permessi() {
               <Indicatore etichetta="Ore residue" valore={f.numero(totali.residue)} nota="Ancora richiedibili" tono="info" />
             </div>
 
-            <div className="gestione-tabella">
+            <div className="gestione-tabella tabella-compatta tabella-monti">
               <Tabella
                 didascalia="Monte ore dei permessi assegnati ai lavoratori"
                 righe={righe}
@@ -176,9 +176,8 @@ export function Permessi() {
                       const v = validita(m, oggi);
                       return (
                         <span className="cella-blocco">
-                          <span style={{ whiteSpace: 'nowrap' }}>
-                            {f.data(m.validoDal)} – {f.data(m.validoAl)}
-                          </span>
+                          <span style={{ whiteSpace: 'nowrap' }}>dal {f.data(m.validoDal)}</span>{' '}
+                          <span style={{ whiteSpace: 'nowrap' }}>al {f.data(m.validoAl)}</span>
                           {v !== 'in corso' && <span className="cella-secondaria">{v === 'scaduto' ? 'Periodo scaduto' : 'Non ancora iniziato'}</span>}
                         </span>
                       );
@@ -429,7 +428,7 @@ function DialogoMonteOre({
         <Casella
           etichetta={
             <>
-              <strong>Monte ore attivo</strong> – il lavoratore può inserire richieste di questo tipo di permesso
+              <strong>Monte ore attivo</strong> – il lavoratore può inserire nuove richieste su questo monte ore
             </>
           }
           checked={m.attivo}

@@ -168,7 +168,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
   .marchio-divisore, .marchio-testo small, .utente-nome small, .nascosto-mobile { display: none; }
   .marchio-testo strong { font-size: 16px; line-height: 18px; white-space: normal; }
   .utente-nome { display: none; }
-  .intestazione { gap: 10px; }
+  .intestazione { gap: 8px; padding: 0 12px; }
+  .intestazione .btn { padding: 6px 8px; }
+  .etichetta-demo { padding: 3px 6px; letter-spacing: 0.06em; }
 }
 
 /* --------------------------------------------------------------------------

@@ -10,6 +10,11 @@ import { numeroCampo } from './statoModulo';
 
 export type StatoRipartizione = 'ok' | 'mancano' | 'avanzano';
 
+/** Testo della scorciatoia che sposta le ore mancanti in una voce, es. "Metti le 0,5 ore mancanti". */
+export function oreMancanti(diff: number): string {
+  return diff === 1 ? 'Metti l’ora mancante' : `Metti le ${f.numero(diff)} ore mancanti`;
+}
+
 export function Ripartizione({
   valori,
   frequentate,
@@ -50,13 +55,13 @@ export function Ripartizione({
         {stato === 'mancano' && (
           <>
             {' '}
-            – ne mancano <strong>{f.numero(diff)}</strong>.
+            – {diff === 1 ? 'ne manca' : 'ne mancano'} <strong>{f.numero(diff)}</strong>.
           </>
         )}
         {stato === 'avanzano' && (
           <>
             {' '}
-            – ne avanzano <strong>{f.numero(-diff)}</strong>: riduci le ore indicate.
+            – {diff === -1 ? 'ne avanza' : 'ne avanzano'} <strong>{f.numero(-diff)}</strong>: riduci le ore indicate.
           </>
         )}
       </p>

@@ -106,6 +106,8 @@ export interface DettaglioRichiesta {
   monteOre?: SituazioneMonteOre & { oreResidueSenzaQuesta: number };
   /** Il corso prevede il gettone (per i corsi a catalogo). */
   gettonePrevisto: boolean;
+  /** Nome dell'ente che ha organizzato il corso (stringa vuota se non indicato o per i permessi). */
+  nomeEnteCorso: string;
 }
 
 /**
